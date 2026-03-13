@@ -1,0 +1,64 @@
+const DEFAULT_LIMIT = 2
+
+export type NavigatorConnection = {
+  downlink?: number
+  effectiveType?: string
+  addEventListener?: (type: string, listener: () => void) => void
+  removeEventListener?: (type: string, listener: () => void) => void
+  onchange?: ((this: NavigatorConnection, ev: Event) => unknown) | null
+}
+
+// 自动标题翻译并发设置（用于前端滑块）
+// 这里的“限制”已经语义化为“并发数”
+export const MIN_AUTO_TITLE_TRANSLATIONS = 0
+export const MAX_AUTO_TITLE_TRANSLATIONS = 10
+export const TITLE_TRANSLATION_CONCURRENCY_FALLBACK = 1
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function getNavigatorConnection(): NavigatorConnection | null {
+  if (typeof navigator === 'undefined') return null
+  const nav = navigator as Navigator & { connection?: NavigatorConnection }
+  return nav.connection ?? null
+}
+
+export function getDefaultAutoTitleTranslationLimit(): number {
+  const connection = getNavigatorConnection()
+  if (connection) {
+    const downlink = typeof connection.downlink === 'number' ? connection.downlink : null
+    if (downlink !== null) {
+      if (downlink >= 8) return 4
+      if (downlink >= 4) return 3
+      if (downlink >= 2) return 2
+      return 2
+    }
+  }
+  return DEFAULT_LIMIT
+}
+
+export function clampAutoTitleTranslationLimit(value?: number | null): number {
+  if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) {
+    return getDefaultAutoTitleTranslationLimit()
+  }
+  return Math.round(clamp(value, MIN_AUTO_TITLE_TRANSLATIONS, MAX_AUTO_TITLE_TRANSLATIONS))
+}
+
+export function getRecommendedTitleTranslationConcurrency(): number {
+  const connection = getNavigatorConnection()
+  if (connection) {
+    if (typeof connection.downlink === 'number') {
+      if (connection.downlink >= 5) return 2
+      if (connection.downlink >= 2) return 1
+      return 1
+    }
+    if ('effectiveType' in connection) {
+      const type = connection.effectiveType
+      if (type === '4g') return 2
+      if (type === '3g') return 1
+      return 1
+    }
+  }
+  return TITLE_TRANSLATION_CONCURRENCY_FALLBACK
+}

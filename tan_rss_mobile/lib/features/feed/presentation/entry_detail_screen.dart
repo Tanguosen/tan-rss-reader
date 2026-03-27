@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_html/flutter_html.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:timeago/timeago.dart' as timeago;
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/models/models.dart';
 import '../data/feed_repository.dart';
@@ -118,6 +119,15 @@ class _EntryDetailContentState extends ConsumerState<_EntryDetailContent> {
   bool _useTranslatedTitle = true;
   bool _useTranslatedContent = true;
   String? _aiError;
+
+  String _formatDate(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return '';
+    try {
+      return timeago.format(DateTime.parse(dateStr), locale: 'zh');
+    } catch (_) {
+      return '';
+    }
+  }
 
   @override
   void initState() {
@@ -330,6 +340,12 @@ class _EntryDetailContentState extends ConsumerState<_EntryDetailContent> {
         (_useTranslatedTitle && (_translatedTitle?.isNotEmpty ?? false))
         ? _translatedTitle!
         : (_entry.title ?? '无标题');
+    final metaParts = [
+      if ((_entry.feedTitle ?? '').isNotEmpty) _entry.feedTitle!,
+      if ((_entry.author ?? '').isNotEmpty) _entry.author!,
+      if (_formatDate(_entry.publishedAt ?? _entry.insertedAt).isNotEmpty)
+        _formatDate(_entry.publishedAt ?? _entry.insertedAt),
+    ];
 
     final bool isImmersive = settings.immersiveReading;
 
@@ -389,7 +405,7 @@ class _EntryDetailContentState extends ConsumerState<_EntryDetailContent> {
             ),
             const SizedBox(height: 10),
             Text(
-              '${_entry.feedTitle ?? ''}  ${_entry.author ?? ''}'.trim(),
+              metaParts.join(' · '),
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),

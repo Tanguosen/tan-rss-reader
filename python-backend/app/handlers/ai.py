@@ -46,7 +46,7 @@ AI_CFG = {
     },
     "embedding": {
         "api_key": _env("AURORA_AI_API_KEY"),
-        "base_url": _env("AURORA_AI_BASE_URL", "http://10.110.3.61:9997/v1"),
+        "base_url": _env("AURORA_AI_EMBEDDING_BASE_URL", _env("AURORA_AI_BASE_URL", "http://10.110.3.61:9997/v1")),
         "model_name": _env("AURORA_AI_EMBEDDING_MODEL", "Qwen3-Embedding-0.6B"),
         "has_api_key": bool(_env("AURORA_AI_API_KEY")),
     },
@@ -314,42 +314,80 @@ async def generate_trend_analysis(entries_text: str) -> dict:
 async def _call_embedding(text: str, config: dict = None) -> List[float]:
     if config is None:
         config = AI_CFG
-    
+
     # 嵌入模型配置优先使用用户配置，如果为空则回退到平台默认配置
     embedding_cfg = config.get("embedding", {})
     default_embedding_cfg = AI_CFG.get("embedding", {})
-    
-    key = embedding_cfg.get("api_key") or config.get("summary", {}).get("api_key") or default_embedding_cfg.get("api_key") or AI_CFG.get("summary", {}).get("api_key")
-    base = embedding_cfg.get("base_url") or default_embedding_cfg.get("base_url") or AI_CFG.get("summary", {}).get("base_url")
-    model = embedding_cfg.get("model_name") or default_embedding_cfg.get("model_name")
-    
+    summary_cfg = config.get("summary", {})
+    default_summary_cfg = AI_CFG.get("summary", {})
+
+    key = (
+        embedding_cfg.get("api_key")
+        or summary_cfg.get("api_key")
+        or default_embedding_cfg.get("api_key")
+        or default_summary_cfg.get("api_key")
+    )
+    base = embedding_cfg.get("base_url") or default_embedding_cfg.get("base_url")
+    configured_model = embedding_cfg.get("model_name") or default_embedding_cfg.get("model_name")
+    env_embedding_model = _env("AURORA_AI_EMBEDDING_MODEL", "Qwen3-Embedding-0.6B")
+    summary_model = summary_cfg.get("model_name") or default_summary_cfg.get("model_name")
+
     if not base:
         print("Embedding Error: No base_url configured")
         return []
-    
+
     url = base.rstrip("/") + "/embeddings"
-    payload = {
-        "model": model,
-        "input": text
-    }
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
-        
-    import asyncio
+
+    candidate_models: List[str] = []
+    for candidate in (configured_model, env_embedding_model):
+        if candidate and candidate not in candidate_models:
+            candidate_models.append(candidate)
+    if summary_model and summary_model not in candidate_models:
+        candidate_models.append(summary_model)
+
+    # 优先避免使用与摘要相同的聊天模型作为 embedding 模型。
+    if summary_model and candidate_models and candidate_models[0] == summary_model:
+        non_summary_candidates = [m for m in candidate_models if m != summary_model]
+        if non_summary_candidates:
+            candidate_models = non_summary_candidates + [summary_model]
+
+    def _is_embedding_model_error(response_text: str) -> bool:
+        lowered = response_text.lower()
+        return "embedding model" in lowered or "is-embedding" in lowered
+
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            
-        if resp.status_code >= 400:
-            print(f"Embedding Error: {resp.status_code} {resp.text}")
-            return []
-            
-        data = resp.json()
-        data_list = data.get("data") or []
-        if not data_list:
-            return []
-        return data_list[0].get("embedding") or []
+            for idx, model in enumerate(candidate_models):
+                payload = {
+                    "model": model,
+                    "input": text,
+                    "encoding_format": "float",
+                }
+                resp = await client.post(url, json=payload, headers=headers)
+
+                if resp.status_code >= 400:
+                    if resp.status_code == 400 and idx < len(candidate_models) - 1 and _is_embedding_model_error(resp.text):
+                        print(
+                            f"Embedding Error: {resp.status_code} {resp.text}; retrying with fallback embedding model"
+                        )
+                        continue
+                    print(f"Embedding Error: {resp.status_code} {resp.text}")
+                    return []
+
+                data = resp.json()
+                data_list = data.get("data") or []
+                if not data_list:
+                    return []
+
+                if model != configured_model and config is AI_CFG:
+                    AI_CFG["embedding"]["model_name"] = model
+
+                return data_list[0].get("embedding") or []
+
+        return []
     except Exception as e:
         print(f"Embedding Exception: {e}")
         return []

@@ -23,6 +23,8 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
   late TextEditingController _apiKeyController;
   late TextEditingController _baseUrlController;
   late TextEditingController _modelNameController;
+  late TextEditingController _embeddingBaseUrlController;
+  late TextEditingController _embeddingModelNameController;
   bool _obscureApiKey = true;
   String _selectedProvider = 'Qwen (Alibaba)';
 
@@ -40,6 +42,8 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
     _apiKeyController = TextEditingController();
     _baseUrlController = TextEditingController();
     _modelNameController = TextEditingController();
+    _embeddingBaseUrlController = TextEditingController();
+    _embeddingModelNameController = TextEditingController();
 
     _loadData();
   }
@@ -49,6 +53,8 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
     _apiKeyController.dispose();
     _baseUrlController.dispose();
     _modelNameController.dispose();
+    _embeddingBaseUrlController.dispose();
+    _embeddingModelNameController.dispose();
     super.dispose();
   }
 
@@ -71,10 +77,11 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
       _prompts = results[1] as List<Map<String, dynamic>>;
       _membership = results[2] as Map<String, dynamic>;
 
-      // 仅保留一个统一的 LLM 配置面板（用 summary 配置作为主配置）
       _apiKeyController.text = _config!.summary.apiKey;
       _baseUrlController.text = _config!.summary.baseUrl;
       _modelNameController.text = _config!.summary.modelName;
+      _embeddingBaseUrlController.text = _config!.embedding.baseUrl;
+      _embeddingModelNameController.text = _config!.embedding.modelName;
 
       // 如果有 Qwen 的特征，设置 provider
       if (_config!.summary.modelName.toLowerCase().contains('qwen')) {
@@ -91,7 +98,6 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
     if (_config == null) return;
     setState(() => _saving = true);
     try {
-      // 将统一的 LLM 配置同时应用到 summary 和 translation (省略了 embedding, 简化用户操作)
       final newServiceConfig = AIServiceConfig(
         apiKey: _apiKeyController.text,
         baseUrl: _baseUrlController.text,
@@ -99,10 +105,18 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
         hasApiKey:
             _apiKeyController.text.isNotEmpty || _config!.summary.hasApiKey,
       );
+      final newEmbeddingConfig = AIServiceConfig(
+        apiKey: _apiKeyController.text,
+        baseUrl: _embeddingBaseUrlController.text,
+        modelName: _embeddingModelNameController.text,
+        hasApiKey:
+            _apiKeyController.text.isNotEmpty || _config!.embedding.hasApiKey,
+      );
 
       final newConfig = AIConfig(
         summary: newServiceConfig,
         translation: newServiceConfig,
+        embedding: newEmbeddingConfig,
         features: _config!.features,
       );
 
@@ -219,13 +233,23 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
         const SizedBox(height: 24),
 
         Text(
-          '$_selectedProvider 配置',
+          'LLM 配置',
           style: Theme.of(
             context,
           ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
         _buildConfigInputs(),
+        const SizedBox(height: 24),
+
+        Text(
+          'Embedding 配置',
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        _buildEmbeddingConfigInputs(),
         const SizedBox(height: 32),
 
         _buildPromptsSection(
@@ -263,6 +287,7 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
               _config = AIConfig(
                 summary: _config!.summary,
                 translation: _config!.translation,
+                embedding: _config!.embedding,
                 features: AIFeatureConfig(
                   autoSummary: _config!.features.autoSummary,
                   autoTranslation: _config!.features.autoTranslation,
@@ -283,6 +308,7 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
               _config = AIConfig(
                 summary: _config!.summary,
                 translation: _config!.translation,
+                embedding: _config!.embedding,
                 features: AIFeatureConfig(
                   autoSummary: val,
                   autoTranslation: _config!.features.autoTranslation,
@@ -303,6 +329,7 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
               _config = AIConfig(
                 summary: _config!.summary,
                 translation: _config!.translation,
+                embedding: _config!.embedding,
                 features: AIFeatureConfig(
                   autoSummary: _config!.features.autoSummary,
                   autoTranslation: _config!.features.autoTranslation,
@@ -323,6 +350,7 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
               _config = AIConfig(
                 summary: _config!.summary,
                 translation: _config!.translation,
+                embedding: _config!.embedding,
                 features: AIFeatureConfig(
                   autoSummary: _config!.features.autoSummary,
                   autoTranslation: val,
@@ -536,6 +564,38 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
           style: Theme.of(
             context,
           ).textTheme.bodySmall?.copyWith(color: Colors.grey),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmbeddingConfigInputs() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '向量检索、我的专题、研究功能会单独使用这里的 embedding 服务配置。',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: Colors.grey),
+        ),
+        const SizedBox(height: 12),
+        _buildTextField(
+          label: 'Embedding 基础URL',
+          controller: _embeddingBaseUrlController,
+          suffixIcon: IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => _embeddingBaseUrlController.clear(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildTextField(
+          label: 'Embedding 模型',
+          controller: _embeddingModelNameController,
+          suffixIcon: IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => _embeddingModelNameController.clear(),
+          ),
         ),
       ],
     );

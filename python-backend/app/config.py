@@ -58,6 +58,7 @@ class EnvSettings(BaseSettings):
     aurora_ai_api_key: str = ""
     aurora_ai_base_url: str = "http://10.110.3.61:9997/v1"
     aurora_ai_model: str = "qwen3"
+    aurora_ai_embedding_base_url: str = "http://10.110.3.61:9997/v1"
     aurora_ai_embedding_model: str = "Qwen3-Embedding-0.6B"
     
     # Backend Server

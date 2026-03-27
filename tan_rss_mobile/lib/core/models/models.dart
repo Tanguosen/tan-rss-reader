@@ -274,11 +274,13 @@ class AIFeatureConfig {
 class AIConfig {
   final AIServiceConfig summary;
   final AIServiceConfig translation;
+  final AIServiceConfig embedding;
   final AIFeatureConfig features;
 
   const AIConfig({
     required this.summary,
     required this.translation,
+    required this.embedding,
     required this.features,
   });
 
@@ -286,6 +288,7 @@ class AIConfig {
     return AIConfig(
       summary: AIServiceConfig.fromJson(json['summary'] ?? {}),
       translation: AIServiceConfig.fromJson(json['translation'] ?? {}),
+      embedding: AIServiceConfig.fromJson(json['embedding'] ?? {}),
       features: AIFeatureConfig.fromJson(json['features'] ?? {}),
     );
   }
@@ -294,6 +297,7 @@ class AIConfig {
     return {
       'summary': summary.toJson(),
       'translation': translation.toJson(),
+      'embedding': embedding.toJson(),
       'features': features.toJson(),
     };
   }

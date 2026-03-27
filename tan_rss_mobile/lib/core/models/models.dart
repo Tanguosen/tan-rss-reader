@@ -80,6 +80,26 @@ class Entry {
   }
 }
 
+class ReadingHistoryItem {
+  final Entry entry;
+  final String viewedAt;
+  final int viewCount;
+
+  const ReadingHistoryItem({
+    required this.entry,
+    required this.viewedAt,
+    required this.viewCount,
+  });
+
+  factory ReadingHistoryItem.fromJson(Map<String, dynamic> json) {
+    return ReadingHistoryItem(
+      entry: Entry.fromJson(json),
+      viewedAt: json['viewed_at'] ?? '',
+      viewCount: json['view_count'] ?? 0,
+    );
+  }
+}
+
 class Feed {
   final String id;
   final String url;
@@ -286,10 +306,7 @@ class Tag {
   const Tag({required this.id, required this.name});
 
   factory Tag.fromJson(Map<String, dynamic> json) {
-    return Tag(
-      id: json['id'] ?? '',
-      name: json['name'] ?? '',
-    );
+    return Tag(id: json['id'] ?? '', name: json['name'] ?? '');
   }
 }
 
@@ -378,11 +395,13 @@ class Channel {
       kind: json['kind'],
       categoryId: json['category_id'],
       ownerId: json['owner_id'],
-      tags: (json['tags'] as List<dynamic>?)
+      tags:
+          (json['tags'] as List<dynamic>?)
               ?.map((e) => Tag.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
-      previewEntries: (json['preview_entries'] as List<dynamic>?)
+      previewEntries:
+          (json['preview_entries'] as List<dynamic>?)
               ?.map((e) => PreviewEntry.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
@@ -423,7 +442,6 @@ class ChannelSourceItem {
     );
   }
 }
-
 
 class TaskExecutionResult {
   final String taskId;
@@ -503,20 +521,109 @@ class SearchResult {
   final String title;
   final int publishedAt;
   final double score;
+  final String? feedId;
 
   const SearchResult({
     required this.id,
     required this.title,
     required this.publishedAt,
     required this.score,
+    this.feedId,
   });
 
   factory SearchResult.fromJson(Map<String, dynamic> json) {
     return SearchResult(
-      id: json['id'] ?? '',
+      id: json['entry_id'] ?? json['id'] ?? '',
       title: json['title'] ?? '',
       publishedAt: json['published_at'] ?? 0,
       score: (json['score'] ?? 0.0).toDouble(),
+      feedId: json['feed_id'],
+    );
+  }
+}
+
+class ResearchResult {
+  final String query;
+  final String title;
+  final String summary;
+  final List<String> keyFindings;
+  final List<String> openQuestions;
+  final List<SearchResult> references;
+
+  const ResearchResult({
+    required this.query,
+    required this.title,
+    required this.summary,
+    required this.keyFindings,
+    required this.openQuestions,
+    required this.references,
+  });
+
+  factory ResearchResult.fromJson(Map<String, dynamic> json) {
+    return ResearchResult(
+      query: json['query'] ?? '',
+      title: json['title'] ?? '',
+      summary: json['summary'] ?? '',
+      keyFindings:
+          (json['key_findings'] as List<dynamic>?)?.map((e) => '$e').toList() ??
+          const [],
+      openQuestions:
+          (json['open_questions'] as List<dynamic>?)
+              ?.map((e) => '$e')
+              .toList() ??
+          const [],
+      references:
+          (json['references'] as List<dynamic>?)
+              ?.map((e) => SearchResult.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
+    );
+  }
+}
+
+class RecommendedTopic {
+  final String id;
+  final String title;
+  final String summary;
+  final String reason;
+  final List<String> keyPoints;
+  final double score;
+  final int entryCount;
+  final String? coverImage;
+  final String? seedEntryId;
+  final List<Entry> entries;
+
+  const RecommendedTopic({
+    required this.id,
+    required this.title,
+    required this.summary,
+    required this.reason,
+    required this.keyPoints,
+    required this.score,
+    required this.entryCount,
+    required this.entries,
+    this.coverImage,
+    this.seedEntryId,
+  });
+
+  factory RecommendedTopic.fromJson(Map<String, dynamic> json) {
+    return RecommendedTopic(
+      id: json['id'] ?? '',
+      title: json['title'] ?? '',
+      summary: json['summary'] ?? '',
+      reason: json['reason'] ?? '',
+      keyPoints:
+          (json['key_points'] as List<dynamic>?)?.map((e) => '$e').toList() ??
+          const [],
+      score: (json['score'] ?? 0.0).toDouble(),
+      entryCount: json['entry_count'] ?? 0,
+      coverImage: json['cover_image'],
+      seedEntryId: json['seed_entry_id'],
+      entries:
+          (json['entries'] as List<dynamic>?)
+              ?.map((e) => Entry.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const [],
     );
   }
 }
@@ -551,16 +658,16 @@ class SynthesisResult {
   final String markdown;
   final List<SynthesisReference> references;
 
-  const SynthesisResult({
-    required this.markdown,
-    required this.references,
-  });
+  const SynthesisResult({required this.markdown, required this.references});
 
   factory SynthesisResult.fromJson(Map<String, dynamic> json) {
     return SynthesisResult(
       markdown: json['markdown'] ?? '',
-      references: (json['references'] as List<dynamic>?)
-              ?.map((e) => SynthesisReference.fromJson(e as Map<String, dynamic>))
+      references:
+          (json['references'] as List<dynamic>?)
+              ?.map(
+                (e) => SynthesisReference.fromJson(e as Map<String, dynamic>),
+              )
               .toList() ??
           [],
     );
@@ -584,8 +691,11 @@ class AIDailyDigest {
     return AIDailyDigest(
       exists: json['exists'] ?? false,
       content: json['content'],
-      references: (json['references'] as List<dynamic>?)
-              ?.map((e) => SynthesisReference.fromJson(e as Map<String, dynamic>))
+      references:
+          (json['references'] as List<dynamic>?)
+              ?.map(
+                (e) => SynthesisReference.fromJson(e as Map<String, dynamic>),
+              )
               .toList() ??
           [],
       createdAt: json['created_at'],
@@ -642,7 +752,8 @@ class SourcePack {
       name: json['name'] ?? '',
       description: json['description'],
       slug: json['slug'],
-      sources: (json['sources'] as List<dynamic>?)
+      sources:
+          (json['sources'] as List<dynamic>?)
               ?.map((e) => SourceInfo.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],

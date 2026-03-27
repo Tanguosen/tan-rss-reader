@@ -233,6 +233,28 @@ final starredEntriesProvider = FutureProvider<List<Entry>>((ref) async {
   return repository.getStarredEntries(limit: settings.pageSize, offset: 0);
 });
 
+final readingHistoryProvider = FutureProvider<List<ReadingHistoryItem>>((
+  ref,
+) async {
+  final authState = ref.watch(authProvider);
+  if (!authState.isLoggedIn) {
+    return <ReadingHistoryItem>[];
+  }
+  final repository = ref.watch(feedRepositoryProvider);
+  return repository.getReadingHistory(limit: 30);
+});
+
+final recommendedTopicsProvider = FutureProvider<List<RecommendedTopic>>((
+  ref,
+) async {
+  final authState = ref.watch(authProvider);
+  if (!authState.isLoggedIn) {
+    return <RecommendedTopic>[];
+  }
+  final repository = ref.watch(feedRepositoryProvider);
+  return repository.getRecommendedTopics(limit: 6);
+});
+
 final channelSquareProvider = FutureProvider<List<Channel>>((ref) async {
   final repository = ref.watch(feedRepositoryProvider);
   return repository.getSquareChannels();

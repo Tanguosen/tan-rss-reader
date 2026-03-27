@@ -97,6 +97,10 @@ class TextTranslationRequest(BaseModel):
 class EmbeddingRequest(BaseModel):
     text: str
 
+class ResearchRequest(BaseModel):
+    query: str
+    limit: int = 8
+
 from fastapi.responses import StreamingResponse
 
 async def get_user_ai_context(user_id: str, session: AsyncSession) -> dict:
@@ -892,6 +896,129 @@ async def get_embedding(
         "success": bool(embedding)
     }
 
+@router.post("/ai/research")
+async def research(
+    req: ResearchRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user = Depends(get_current_user)
+) -> dict:
+    query = req.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query cannot be empty")
+
+    from .vector_store import vector_store
+
+    hits = await vector_store.search(query, limit=max(4, min(req.limit * 2, 16)))
+    entry_ids = []
+    for hit in hits:
+        entry_id = hit.get("entry_id")
+        if entry_id and entry_id not in entry_ids:
+            entry_ids.append(entry_id)
+
+    if not entry_ids:
+        return {
+            "query": query,
+            "title": f"{query} 研究",
+            "summary": "未找到足够的相关文章，暂时无法生成研究结论。",
+            "key_findings": [],
+            "open_questions": ["尝试更具体的关键词，或等待更多相关文章被向量化。"],
+            "references": [],
+        }
+
+    stmt = (
+        select(SAEntry)
+        .where(SAEntry.id.in_(entry_ids))
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    entry_map = {entry.id: entry for entry in rows}
+
+    references = []
+    context_blocks = []
+    ordered_refs = []
+    for hit in hits:
+        entry_id = hit.get("entry_id")
+        if not entry_id or entry_id not in entry_map:
+            continue
+        entry = entry_map[entry_id]
+        summary_text = (entry.summary or entry.content or "")[:700].replace("\n", " ")
+        ordered_refs.append({
+            "entry_id": entry.id,
+            "title": entry.title or "无标题",
+            "published_at": int(entry.published_at.timestamp()) if entry.published_at else 0,
+            "score": hit.get("score") or 0.0,
+            "feed_id": entry.feed_id,
+        })
+        references.append({
+            "id": entry.id,
+            "entry_id": entry.id,
+            "title": entry.title or "无标题",
+            "published_at": int(entry.published_at.timestamp()) if entry.published_at else 0,
+            "score": hit.get("score") or 0.0,
+            "feed_id": entry.feed_id,
+        })
+        context_blocks.append(
+            f"[{len(context_blocks)+1}] 标题: {entry.title or '无标题'}\n"
+            f"时间: {entry.published_at}\n"
+            f"内容: {summary_text}\n"
+        )
+        if len(context_blocks) >= req.limit:
+            break
+
+    config = await get_user_ai_context(current_user.id, session)
+    context_text = "\n".join(context_blocks)[:12000]
+    prompt = (
+        "你是一名研究分析助手。请基于提供的相关文章，为用户的问题生成一份结构化研究摘要。"
+        "请严格返回 JSON，对象字段必须包含：\n"
+        "- title: 研究标题，中文，20字以内\n"
+        "- summary: 3到5句研究结论，中文\n"
+        "- key_findings: 3到5条关键发现数组，中文短句\n"
+        "- open_questions: 2到3条后续值得继续观察的问题数组，中文短句\n\n"
+        f"用户问题：{query}\n\n"
+        f"相关文章：\n{context_text}"
+    )
+
+    try:
+        raw = await _call_ai([
+            {"role": "system", "content": "你是一名严谨的研究分析助手，只返回 JSON。"},
+            {"role": "user", "content": prompt},
+        ], max_tokens=1200, config=config)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Research generation failed: {str(e)}")
+
+    json_text = raw
+    match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
+    if match:
+        json_text = match.group(1)
+
+    parsed = None
+    try:
+        parsed = json.loads(json_text)
+    except Exception:
+        p1 = raw.find("{")
+        p2 = raw.rfind("}")
+        if p1 != -1 and p2 != -1:
+            try:
+                parsed = json.loads(raw[p1:p2 + 1])
+            except Exception:
+                parsed = None
+
+    if not isinstance(parsed, dict):
+        parsed = {
+            "title": f"{query} 研究",
+            "summary": raw[:300] or "暂时无法生成结构化研究结论。",
+            "key_findings": [],
+            "open_questions": [],
+        }
+
+    return {
+        "query": query,
+        "title": parsed.get("title") or f"{query} 研究",
+        "summary": parsed.get("summary") or "暂时无法生成研究结论。",
+        "key_findings": [str(item) for item in parsed.get("key_findings", []) if str(item).strip()],
+        "open_questions": [str(item) for item in parsed.get("open_questions", []) if str(item).strip()],
+        "references": references[:req.limit],
+    }
+
 class SynthesisRequest(BaseModel):
     entry_ids: List[str]
 
@@ -1182,4 +1309,3 @@ async def generate_deep_dive(
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
-

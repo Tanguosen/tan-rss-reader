@@ -226,6 +226,14 @@ class FeedRepository {
     }
   }
 
+  Future<void> trackEntryView(String id) async {
+    try {
+      await _apiClient.dio.post('/me/history/$id/view');
+    } on DioException {
+      // 阅读历史是增强能力，不阻塞主阅读流程
+    }
+  }
+
   Future<void> markEntryStarred(String id, {required bool starred}) async {
     try {
       if (starred) {
@@ -604,6 +612,34 @@ class FeedRepository {
     }
   }
 
+  Future<List<ReadingHistoryItem>> getReadingHistory({int limit = 30}) async {
+    try {
+      final response = await _apiClient.dio.get(
+        '/me/history',
+        queryParameters: {'limit': limit},
+      );
+      return (response.data as List)
+          .map((e) => ReadingHistoryItem.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw Exception('加载最近阅读失败：${e.message}');
+    }
+  }
+
+  Future<List<RecommendedTopic>> getRecommendedTopics({int limit = 6}) async {
+    try {
+      final response = await _apiClient.dio.get(
+        '/me/topics/recommended',
+        queryParameters: {'limit': limit},
+      );
+      return (response.data as List)
+          .map((e) => RecommendedTopic.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw Exception('加载我的专题失败：${e.message}');
+    }
+  }
+
   Future<AiSummaryData> summarizeEntry({
     required String entryId,
     String language = 'zh',
@@ -880,9 +916,9 @@ class FeedRepository {
     int limit = 10,
   }) async {
     try {
-      final response = await _apiClient.dio.get(
+      final response = await _apiClient.dio.post(
         '/vector/search',
-        queryParameters: {'query': query, 'limit': limit},
+        data: {'query': query, 'limit': limit},
       );
       final data = response.data as Map<String, dynamic>;
       final results = (data['results'] ?? []) as List;
@@ -891,6 +927,18 @@ class FeedRepository {
           .toList();
     } on DioException catch (e) {
       throw Exception('搜索失败：${e.message}');
+    }
+  }
+
+  Future<ResearchResult> runResearch(String query, {int limit = 8}) async {
+    try {
+      final response = await _apiClient.dio.post(
+        '/ai/research',
+        data: {'query': query, 'limit': limit},
+      );
+      return ResearchResult.fromJson(response.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw Exception('研究失败：${e.message}');
     }
   }
 

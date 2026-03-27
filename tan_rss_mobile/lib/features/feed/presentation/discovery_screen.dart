@@ -5,6 +5,8 @@ import '../data/feed_repository.dart';
 import 'entry_detail_screen.dart';
 import 'daily_digest_screen.dart';
 import 'feed_providers.dart';
+import 'my_topics_screen.dart';
+import 'research_screen.dart';
 
 class DiscoveryScreen extends ConsumerStatefulWidget {
   const DiscoveryScreen({super.key});
@@ -16,8 +18,6 @@ class DiscoveryScreen extends ConsumerStatefulWidget {
 class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  final TextEditingController _searchController = TextEditingController();
-  bool _isSearching = false;
   int _selectedDays = 3;
 
   @override
@@ -29,7 +29,6 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen>
   @override
   void dispose() {
     _tabController.dispose();
-    _searchController.dispose();
     super.dispose();
   }
 
@@ -44,8 +43,8 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen>
           child: TabBar(
             controller: _tabController,
             tabs: const [
-              Tab(text: '话题趋势'),
-              Tab(text: '语义搜索'),
+              Tab(text: '全网趋势'),
+              Tab(text: '我的专题'),
             ],
           ),
         ),
@@ -61,11 +60,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen>
                   });
                 },
               ),
-              _SearchTab(
-                searchController: _searchController,
-                isSearching: _isSearching,
-                onSearch: _handleSearch,
-              ),
+              const _MyTopicsTab(),
             ],
           ),
         ),
@@ -78,24 +73,39 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen>
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
       child: Row(
         children: [
-          Icon(Icons.local_fire_department, size: 14, color: Colors.red[300]),
-          const SizedBox(width: 4),
-          Text('重大事件', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-          const SizedBox(width: 16),
-          Icon(Icons.newspaper, size: 14, color: Colors.blue[300]),
-          const SizedBox(width: 4),
-          Text(
-            '信息源高光',
-            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          Expanded(
+            child: Wrap(
+              spacing: 16,
+              runSpacing: 6,
+              children: [
+                _ActionHint(
+                  icon: Icons.local_fire_department,
+                  color: Colors.red[300]!,
+                  label: '重大事件',
+                ),
+                _ActionHint(
+                  icon: Icons.newspaper,
+                  color: Colors.blue[300]!,
+                  label: '信息源高光',
+                ),
+                _ActionHint(
+                  icon: Icons.manage_search,
+                  color: Colors.purple[300]!,
+                  label: '深度研究',
+                ),
+              ],
+            ),
           ),
-          const SizedBox(width: 16),
-          Icon(Icons.manage_search, size: 14, color: Colors.purple[300]),
-          const SizedBox(width: 4),
-          Text('深度解读', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-          const Spacer(),
-          Text(
-            '已集成至每日简报',
-            style: TextStyle(fontSize: 11, color: Colors.grey[400]),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ResearchScreen()),
+              );
+            },
+            icon: const Icon(Icons.travel_explore, size: 16),
+            label: const Text('研究'),
           ),
         ],
       ),
@@ -202,12 +212,29 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen>
       ),
     );
   }
+}
 
-  void _handleSearch(String query) {
-    if (query.trim().isEmpty) return;
-    setState(() {
-      _isSearching = true;
-    });
+class _ActionHint extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String label;
+
+  const _ActionHint({
+    required this.icon,
+    required this.color,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+      ],
+    );
   }
 }
 
@@ -227,8 +254,27 @@ class _TrendsTab extends ConsumerWidget {
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '全网趋势',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
               const Text(
-                '时间范围: ',
+                '聚类范围: ',
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),
               const SizedBox(width: 8),
@@ -246,6 +292,14 @@ class _TrendsTab extends ConsumerWidget {
                 },
               ),
               const Spacer(),
+              Text(
+                '不受“我的专题”影响',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(width: 4),
               IconButton(
                 onPressed: () =>
                     ref.invalidate(_clustersProvider(selectedDays)),
@@ -587,6 +641,262 @@ class _SearchTab extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<_SearchTab> createState() => _SearchTabState();
+}
+
+class _MyTopicsTab extends ConsumerWidget {
+  const _MyTopicsTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final topicsAsync = ref.watch(recommendedTopicsProvider);
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '个性化推荐',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSecondaryContainer,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  '基于你的订阅、最近阅读和向量相似内容生成',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: () => ref.invalidate(recommendedTopicsProvider),
+                icon: const Icon(Icons.refresh),
+              ),
+              IconButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ResearchScreen()),
+                  );
+                },
+                icon: const Icon(Icons.manage_search),
+                tooltip: '深度搜索研究',
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: topicsAsync.when(
+            data: (topics) {
+              if (topics.isEmpty) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.auto_awesome_outlined,
+                          size: 56,
+                          color: Colors.grey,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          '暂时还没有专题',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '多阅读几篇你订阅的内容后，这里会自动形成个性化专题。',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          '后续这里会扩展为“深度搜索研究”入口。',
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              return RefreshIndicator(
+                onRefresh: () async =>
+                    ref.invalidate(recommendedTopicsProvider),
+                child: ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  itemCount: topics.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final topic = topics[index];
+                    return Card(
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => TopicDetailScreen(topic: topic),
+                            ),
+                          );
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      topic.title,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primaryContainer,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      '${topic.entryCount} 篇',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onPrimaryContainer,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                topic.reason,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                topic.summary,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                  height: 1.4,
+                                ),
+                              ),
+                              if (topic.keyPoints.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: topic.keyPoints
+                                      .map(
+                                        (point) => Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .surfaceContainerHighest,
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            point,
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                  const SizedBox(height: 16),
+                  Text('加载失败: $e'),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: () => ref.invalidate(recommendedTopicsProvider),
+                    child: const Text('重试'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _SearchTabState extends ConsumerState<_SearchTab> {

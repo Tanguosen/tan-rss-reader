@@ -10,6 +10,7 @@ from ..models import Feed as SAFeed, Entry as SAEntry, Channel as SAChannel, Cha
 from ..services.rss_fetcher import fetch_feed as rss_fetch
 from ..utils.filters import apply_date_filter_to_entries_query
 from .auth import get_optional_user, get_current_admin
+from ..user_entry_state import count_unread_for_feeds
 
 router = APIRouter()
 
@@ -62,20 +63,17 @@ async def list_feeds(
             
         stmt = stmt.order_by(desc(SAFeed.created_at)).offset(offset).limit(limit)
         rows = (await session.execute(stmt)).all()
+        unread_map = await count_unread_for_feeds(session, [f.id for f, _, _ in rows], user.id)
         
         feeds = []
         for f, sub_id, channel_id in rows:
-            # Count unread
-            unread_q = select(func.count(SAEntry.id)).where(SAEntry.feed_id == f.id, SAEntry.is_read == False)
-            unread = (await session.execute(unread_q)).scalar() or 0
-            
             feeds.append(
                 Feed(
                     id=f.id,
                     url=f.url,
                     title=f.title,
                     favicon_url=f.favicon,
-                    unread_count=int(unread),
+                    unread_count=int(unread_map.get(f.id, 0)),
                     last_checked_at=f.last_updated.isoformat() if f.last_updated else None,
                     last_error=f.last_status,
                     channel_id=channel_id
@@ -90,18 +88,17 @@ async def list_feeds(
         q = q.where(or_(SAFeed.title.ilike(f"%{search}%"), SAFeed.url.ilike(f"%{search}%")))
     q = q.offset(offset).limit(limit)
     rows = (await session.execute(q)).scalars().all()
+    unread_map = await count_unread_for_feeds(session, [f.id for f in rows], None)
     
     feeds = []
     for f in rows:
-        unread_q = select(func.count(SAEntry.id)).where(SAEntry.feed_id == f.id, SAEntry.is_read == False)
-        unread = (await session.execute(unread_q)).scalar() or 0
         feeds.append(
             Feed(
                 id=f.id,
                 url=f.url,
                 title=f.title,
                 favicon_url=f.favicon,
-                unread_count=int(unread),
+                unread_count=int(unread_map.get(f.id, 0)),
                 last_checked_at=f.last_updated.isoformat() if f.last_updated else None,
                 last_error=f.last_status,
             )
@@ -280,18 +277,16 @@ async def list_feeds(
 
     q = q.order_by(desc(SAFeed.created_at)).offset(offset).limit(min(limit, 1000))
     rows = (await session.execute(q)).scalars().all()
+    unread_map = await count_unread_for_feeds(session, [f.id for f in rows], current.id if current else None)
     feeds: List[Feed] = []
     for f in rows:
-        eq = select(func.count(SAEntry.id)).where(SAEntry.feed_id == f.id, SAEntry.is_read == False)
-        eq = apply_date_filter_to_entries_query(eq, date_range, time_field, SAEntry.created_at, SAEntry.published_at)
-        unread = (await session.execute(eq)).scalar() or 0
         feeds.append(
             Feed(
                 id=f.id,
                 url=f.url,
                 title=f.title,
                 favicon_url=f.favicon,
-                unread_count=int(unread),
+                unread_count=int(unread_map.get(f.id, 0)),
                 last_checked_at=f.last_updated.isoformat() + "Z" if f.last_updated else None,
                 last_error=f.last_status,
             )
@@ -417,13 +412,12 @@ async def create_feed(payload: CreateFeedRequest, current: Optional[SAUser] = De
     )
 
 @router.get("/feeds/{id}", response_model=Feed)
-async def get_feed(id: str, session: AsyncSession = Depends(get_session)) -> Feed:
+async def get_feed(id: str, session: AsyncSession = Depends(get_session), current: Optional[SAUser] = Depends(get_optional_user)) -> Feed:
     q = await session.execute(select(SAFeed).where(SAFeed.id == id))
     f = q.scalar_one_or_none()
     if not f:
         raise HTTPException(status_code=404)
-    eq = select(func.count(SAEntry.id)).where(SAEntry.feed_id == id, SAEntry.is_read == False)
-    unread = (await session.execute(eq)).scalar() or 0
+    unread = (await count_unread_for_feeds(session, [id], current.id if current else None)).get(id, 0)
     return Feed(
         id=f.id,
         url=f.url,
@@ -436,7 +430,7 @@ async def get_feed(id: str, session: AsyncSession = Depends(get_session)) -> Fee
 
 @router.put("/feeds/{id}", response_model=Feed)
 @router.patch("/feeds/{id}", response_model=Feed)
-async def update_feed(id: str, payload: UpdateFeedRequest, session: AsyncSession = Depends(get_session)) -> Feed:
+async def update_feed(id: str, payload: UpdateFeedRequest, session: AsyncSession = Depends(get_session), current: Optional[SAUser] = Depends(get_optional_user)) -> Feed:
     q = await session.execute(select(SAFeed).where(SAFeed.id == id))
     f = q.scalar_one_or_none()
     if not f:
@@ -447,8 +441,7 @@ async def update_feed(id: str, payload: UpdateFeedRequest, session: AsyncSession
         f.update_interval = payload.update_interval
     f.updated_at = datetime.utcnow()
     await session.commit()
-    eq = select(func.count(SAEntry.id)).where(SAEntry.feed_id == id, SAEntry.is_read == False)
-    unread = (await session.execute(eq)).scalar() or 0
+    unread = (await count_unread_for_feeds(session, [id], current.id if current else None)).get(id, 0)
     return Feed(
         id=f.id,
         url=f.url,

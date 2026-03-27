@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, Integer, DateTime, Text, Boolean, ForeignKey
+from sqlalchemy import String, Integer, DateTime, Text, Boolean, ForeignKey, UniqueConstraint
 from datetime import datetime
 from typing import Optional
 from .db import Base
@@ -210,6 +210,35 @@ class Subscription(Base):
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
     channel_id: Mapped[str] = mapped_column(String, ForeignKey("channels.id"), index=True)
     notify: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class UserEntryHistory(Base):
+    __tablename__ = "user_entry_history"
+    __table_args__ = (
+        UniqueConstraint("user_id", "entry_id", name="uq_user_entry_history_user_entry"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    entry_id: Mapped[str] = mapped_column(String, ForeignKey("entries.id"), index=True)
+    view_count: Mapped[int] = mapped_column(Integer, default=1)
+    first_viewed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_viewed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class UserEntryState(Base):
+    __tablename__ = "user_entry_states"
+    __table_args__ = (
+        UniqueConstraint("user_id", "entry_id", name="uq_user_entry_states_user_entry"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    entry_id: Mapped[str] = mapped_column(String, ForeignKey("entries.id"), index=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_starred: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

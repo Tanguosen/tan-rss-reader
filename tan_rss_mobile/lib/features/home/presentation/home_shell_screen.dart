@@ -11,6 +11,8 @@ import '../../feed/presentation/feed_providers.dart';
 import '../../feed/presentation/channel_square_screen.dart';
 import '../../feed/presentation/discovery_screen.dart';
 import '../../feed/presentation/entry_detail_screen.dart';
+import '../../feed/presentation/my_topics_screen.dart';
+import '../../feed/presentation/reading_history_screen.dart';
 
 class HomeShellScreen extends ConsumerStatefulWidget {
   const HomeShellScreen({super.key});
@@ -142,6 +144,28 @@ class SubscribedChannelsScreen extends ConsumerWidget {
                 ),
               ),
               const Spacer(),
+              IconButton(
+                tooltip: '最近阅读',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ReadingHistoryScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.history),
+              ),
+              IconButton(
+                tooltip: '我的专题',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const MyTopicsScreen()),
+                  );
+                },
+                icon: const Icon(Icons.auto_awesome_outlined),
+              ),
               IconButton(
                 onPressed: () => _refresh(ref),
                 icon: const Icon(Icons.refresh),

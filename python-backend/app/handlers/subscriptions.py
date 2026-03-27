@@ -6,9 +6,10 @@ from sqlalchemy import select, desc, asc
 from uuid import uuid4
 from datetime import datetime
 from ..db import SessionLocal
-from ..models import Subscription as SASub, Channel as SAChannel, ChannelSource as SAChannelSource, Feed as SAFeed, Entry as SAEntry, EntryAI as SAEntryAI
+from ..models import Subscription as SASub, Channel as SAChannel, ChannelSource as SAChannelSource, Feed as SAFeed, Entry as SAEntry, EntryAI as SAEntryAI, UserEntryState as SAUserEntryState
 from .auth import get_current_user
 from ..utils.filters import apply_date_filter_to_entries_query
+from ..user_entry_state import read_value, starred_value, unread_filter, with_user_entry_state
 
 router = APIRouter()
 
@@ -127,9 +128,10 @@ async def my_subscription_entries(
     feed_ids = list(set(q2.scalars().all()))
     if not feed_ids:
         return []
-    q = select(SAEntry, SAFeed.title, SAEntryAI.translation).outerjoin(SAEntryAI, SAEntry.id == SAEntryAI.entry_id).where(SAEntry.feed_id == SAFeed.id, SAEntry.feed_id.in_(feed_ids))
+    q = select(SAEntry, SAFeed.title, SAEntryAI.translation, SAUserEntryState).outerjoin(SAEntryAI, SAEntry.id == SAEntryAI.entry_id).where(SAEntry.feed_id == SAFeed.id, SAEntry.feed_id.in_(feed_ids))
+    q = with_user_entry_state(q, current.id, SAEntry)
     if unread_only:
-        q = q.where(SAEntry.is_read == False)
+        q = q.where(unread_filter(current.id, SAEntry))
     if high_quality_only:
         from sqlalchemy import or_
         q = q.where(or_(SAEntry.quality_score >= 60, SAEntry.word_count >= 100))
@@ -142,7 +144,7 @@ async def my_subscription_entries(
     rows = await session.execute(q)
     items: List[Entry] = []
     import json
-    for e, feed_title, translation_json in rows.all():
+    for e, feed_title, translation_json, state in rows.all():
         translated_title = None
         if translation_json:
             try:
@@ -167,8 +169,8 @@ async def my_subscription_entries(
                 content=e.content,
                 published_at=e.published_at.isoformat() + "Z" if e.published_at else None,
                 inserted_at=e.created_at.isoformat() + "Z" if e.created_at else None,
-                read=bool(e.is_read),
-                starred=bool(e.is_starred),
+                read=read_value(e, state, current.id),
+                starred=starred_value(e, state, current.id),
             )
         )
     return items

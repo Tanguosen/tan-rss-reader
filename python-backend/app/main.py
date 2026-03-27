@@ -5,6 +5,7 @@ from sqlalchemy import select
 from .db import engine, Base as SABase, SessionLocal
 from .models import AppSettingsRow as SAAppSettingsRow
 from .config import SETTINGS
+from .compat_migrations import migrate_global_entry_state_to_user_state
 from .handlers.icons import router as icons_router
 from .handlers.tasks import router as tasks_router, TASK_SCHEDULER
 from .handlers.opml import router as opml_router
@@ -24,6 +25,7 @@ from .handlers.vector import router as vector_router
 from .handlers.source_packs import router as packs_router
 from .handlers.membership import router as membership_router
 from .handlers.prompts import router as prompts_router
+from .handlers.personalization import router as personalization_router
 
 app = FastAPI()
 
@@ -60,6 +62,7 @@ app.include_router(vector_router, prefix="/api")
 app.include_router(packs_router, prefix="/api")
 app.include_router(membership_router, prefix="/api")
 app.include_router(prompts_router, prefix="/api")
+app.include_router(personalization_router, prefix="/api")
 
 @app.on_event("startup")
 async def on_startup():
@@ -92,6 +95,7 @@ async def on_startup():
             SETTINGS.translation_display_mode = srow.translation_display_mode
             SETTINGS.rsshub_url = srow.rsshub_url
             SETTINGS.branding_toggle = bool(getattr(srow, "branding_toggle", False))
+        await migrate_global_entry_state_to_user_state(session)
         await init_ai_config(session)
         TASK_SCHEDULER.start_scheduler()
     finally:

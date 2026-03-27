@@ -7,9 +7,10 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, asc, delete
 from ..db import SessionLocal
-from ..models import Channel as SAChannel, ChannelSource as SAChannelSource, Feed as SAFeed, Entry as SAEntry, Category as SACategory, Tag as SATag, ChannelTag as SAChannelTag
+from ..models import Channel as SAChannel, ChannelSource as SAChannelSource, Feed as SAFeed, Entry as SAEntry, Category as SACategory, Tag as SATag, ChannelTag as SAChannelTag, UserEntryState as SAUserEntryState
 from ..utils.filters import apply_date_filter_to_entries_query
 from .auth import get_current_user, get_current_admin, get_optional_user
+from ..user_entry_state import bulk_mark_read_for_entries, read_value, starred_value, unread_filter, with_user_entry_state
 
 router = APIRouter()
 
@@ -451,8 +452,6 @@ async def remove_channel_source(id: str, feed_id: str, session: AsyncSession = D
     await session.commit()
     return {"message": "Removed"}
 
-from sqlalchemy import update as sql_update
-
 @router.post("/channels/{id}/refresh")
 async def refresh_channel(
     id: str,
@@ -487,13 +486,17 @@ async def mark_channel_all_read(
     )).scalars().all()
     if not feed_ids:
         return {"updated": 0}
-    result = await session.execute(
-        sql_update(SAEntry)
-        .where(SAEntry.feed_id.in_(feed_ids), SAEntry.is_read == False)
-        .values(is_read=True)
+    entry_ids = (
+        await session.execute(select(SAEntry.id).where(SAEntry.feed_id.in_(feed_ids)))
+    ).scalars().all()
+    updated = await bulk_mark_read_for_entries(
+        session,
+        user.id,
+        entry_ids,
+        read=True,
     )
     await session.commit()
-    return {"updated": result.rowcount}
+    return {"updated": updated}
 
 
 @router.get("/channels/{id}/entries", response_model=List[Entry])
@@ -508,13 +511,15 @@ async def channel_entries(
     order_by: Optional[str] = Query(default="created_at"),
     order: Optional[str] = Query(default="desc"),
     session: AsyncSession = Depends(get_session),
+    current_user = Depends(get_optional_user),
 ) -> List[Entry]:
     rows = (await session.execute(select(SAChannelSource.feed_id).where(SAChannelSource.channel_id == id))).scalars().all()
     if not rows:
         return []
-    q = select(SAEntry, SAFeed.title).where(SAEntry.feed_id == SAFeed.id, SAEntry.feed_id.in_(rows))
+    q = select(SAEntry, SAFeed.title, SAUserEntryState).where(SAEntry.feed_id == SAFeed.id, SAEntry.feed_id.in_(rows))
+    q = with_user_entry_state(q, current_user.id if current_user else None, SAEntry)
     if unread_only:
-        q = q.where(SAEntry.is_read == False)
+        q = q.where(unread_filter(current_user.id if current_user else None, SAEntry))
     if high_quality_only:
         from sqlalchemy import or_
         q = q.where(or_(SAEntry.quality_score >= 60, SAEntry.word_count >= 100))
@@ -526,7 +531,7 @@ async def channel_entries(
     q = q.offset(offset).limit(min(limit, 1000))
     result = await session.execute(q)
     items: List[Entry] = []
-    for e, feed_title in result.all():
+    for e, feed_title, state in result.all():
         items.append(
             Entry(
                 id=e.id,
@@ -539,8 +544,8 @@ async def channel_entries(
                 content=e.content,
                 published_at=e.published_at.isoformat() + "Z" if e.published_at else None,
                 inserted_at=e.created_at.isoformat() + "Z" if e.created_at else None,
-                read=bool(e.is_read),
-                starred=bool(e.is_starred),
+                read=read_value(e, state, current_user.id if current_user else None),
+                starred=starred_value(e, state, current_user.id if current_user else None),
             )
         )
     return items

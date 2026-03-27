@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # TAN 启动脚本
-# 依次启动后端（Python）和前端（Vue 3）
+# 只启动后端（Python）
 
 set -e
 
@@ -27,7 +27,7 @@ cleanup() {
 trap cleanup INT TERM
 
 # 1. 启动后端
-echo -e "${GREEN}[1/2] 启动 Python 后端...${NC}"
+echo -e "${GREEN}[1/1] 启动 Python 后端...${NC}"
 cd python-backend
 
 # 检查 Python 环境
@@ -47,42 +47,20 @@ source venv/bin/activate
 echo "安装/检查依赖..."
 pip install -r requirements.txt > /dev/null 2>&1
 
-# 启动后端
-python3 -m uvicorn app.main:app --host 127.0.0.1 --port 27496 --reload &
+# 启动后端并绑定到 0.0.0.0 以允许手机访问
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 27496 --reload &
 BACKEND_PID=$!
 cd ..
 
 echo -e "${GREEN}✓ 后端已启动 (PID: $BACKEND_PID)${NC}"
 echo -e "  API: http://127.0.0.1:27496"
-echo ""
-
-# 等待后端启动
-sleep 3
-
-# 2. 启动前端
-echo -e "${GREEN}[2/2] 启动 Vue 3 前端...${NC}"
-cd rss-desktop
-
-# 安装依赖（如果需要）
-if [ ! -d "node_modules" ]; then
-    echo "安装依赖..."
-    pnpm install
-fi
-
-# 启动前端
-pnpm run dev:frontend &
-FRONTEND_PID=$!
-cd ..
-
-echo -e "${GREEN}✓ 前端已启动 (PID: $FRONTEND_PID)${NC}"
-echo -e "  Web: http://127.0.0.1:5173"
+echo -e "  局域网 API: http://0.0.0.0:27496"
 echo ""
 
 # 显示运行状态
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}🚀 服务运行中${NC}"
+echo -e "${GREEN}🚀 后端服务运行中${NC}"
 echo ""
-echo "📱 前端: http://127.0.0.1:5173"
 echo "🔧 后端: http://127.0.0.1:27496"
 echo ""
 echo -e "${YELLOW}按 Ctrl+C 停止服务${NC}"

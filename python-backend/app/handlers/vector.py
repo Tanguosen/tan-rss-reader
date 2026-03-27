@@ -54,24 +54,27 @@ async def analyze_cluster(req: ClusterAnalysisRequest, session: AsyncSession = D
     if not req.entry_ids:
          return {"timeline": [], "analysis": {}, "stats": {}}
          
-    # Fetch entries
-    stmt = select(Entry).where(Entry.id.in_(req.entry_ids)).order_by(Entry.published_at.asc())
-    result = await session.execute(stmt)
-    entries = result.scalars().all()
+    # Fetch entries with feed title
+    from sqlalchemy.orm import selectinload
+    from ..models import Feed
     
-    if not entries:
+    stmt = select(Entry, Feed.title.label("feed_title")).join(Feed, Entry.feed_id == Feed.id).where(Entry.id.in_(req.entry_ids)).order_by(Entry.published_at.asc())
+    result = await session.execute(stmt)
+    rows = result.all()
+    
+    if not rows:
         raise HTTPException(status_code=404, detail="No entries found")
         
     # Prepare timeline
     timeline = []
     text_content = ""
     
-    for e in entries:
+    for e, feed_title in rows:
         timeline.append({
             "id": str(e.id),
             "title": e.title,
             "published_at": int(e.published_at.timestamp()) if e.published_at else 0,
-            "source": "RSS Feed", # Ideally fetch feed title but avoiding N+1 lazy load if not eager loaded
+            "source": feed_title or "RSS Feed",
             "summary": e.summary[:200] if e.summary else (e.content[:200] if e.content else "")
         })
         # Add to text content for AI (limit per entry to avoid huge context)
@@ -87,7 +90,7 @@ async def analyze_cluster(req: ClusterAnalysisRequest, session: AsyncSession = D
     # Group by date
     from collections import defaultdict
     date_counts = defaultdict(int)
-    for e in entries:
+    for e, _ in rows:
         if e.published_at:
             date_str = e.published_at.strftime("%Y-%m-%d")
             date_counts[date_str] += 1

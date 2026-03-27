@@ -19,7 +19,7 @@ def _env(key: str, default: str = "") -> str:
     val = os.getenv(key)
     return val if val else default
 
-AUTH_SECRET = _env("AURORA_AUTH_SECRET", "dev-secret")
+AUTH_SECRET = _env("AURORA_AUTH_SECRET", "aurora-rss-reader-secret-key-for-jwt-token-signing-2024")
 AUTH_EXPIRE_MINUTES = int(_env("AURORA_AUTH_EXPIRE_MINUTES", "20160")) # 14 days
 
 async def get_session() -> AsyncSession:

@@ -53,6 +53,17 @@ def add_columns():
     else:
         print("Column category_id already exists in channels.")
 
+    if "icon_url" not in columns:
+        print("Adding icon_url column to channels table...")
+        try:
+            cursor.execute("ALTER TABLE channels ADD COLUMN icon_url VARCHAR")
+            conn.commit()
+            print("Column icon_url added.")
+        except Exception as e:
+            print(f"Error adding column icon_url: {e}")
+    else:
+        print("Column icon_url already exists in channels.")
+
     # Check ai_configs columns
     cursor.execute("PRAGMA table_info(ai_configs)")
     ai_columns = [info[1] for info in cursor.fetchall()]
@@ -76,6 +87,44 @@ def add_columns():
                 print(f"Column {col} added.")
             except Exception as e:
                 print(f"Error adding {col}: {e}")
+
+    # Check entries columns
+    cursor.execute("PRAGMA table_info(entries)")
+    entries_columns = [info[1] for info in cursor.fetchall()]
+    
+    if "dedup_key" not in entries_columns:
+        print("Adding dedup_key column to entries table...")
+        try:
+            cursor.execute("ALTER TABLE entries ADD COLUMN dedup_key VARCHAR")
+            conn.commit()
+            print("Column dedup_key added to entries.")
+        except Exception as e:
+            print(f"Error adding dedup_key: {e}")
+            
+    # Check ai_daily_digests
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ai_daily_digests'")
+    if not cursor.fetchone():
+        print("Creating ai_daily_digests table...")
+        try:
+            cursor.execute("""
+            CREATE TABLE ai_daily_digests (
+                id VARCHAR NOT NULL, 
+                user_id VARCHAR NOT NULL, 
+                date_str VARCHAR NOT NULL, 
+                content TEXT NOT NULL, 
+                references TEXT NOT NULL, 
+                created_at DATETIME NOT NULL, 
+                updated_at DATETIME NOT NULL, 
+                PRIMARY KEY (id), 
+                FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+            """)
+            cursor.execute("CREATE INDEX ix_ai_daily_digests_user_id ON ai_daily_digests (user_id)")
+            cursor.execute("CREATE INDEX ix_ai_daily_digests_date_str ON ai_daily_digests (date_str)")
+            conn.commit()
+            print("Table ai_daily_digests created.")
+        except Exception as e:
+            print(f"Error creating ai_daily_digests: {e}")
 
     conn.close()
 

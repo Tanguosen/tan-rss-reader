@@ -6,8 +6,9 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, asc
 from ..db import SessionLocal
-from ..models import Entry as SAEntry, Feed as SAFeed
+from ..models import Entry as SAEntry, Feed as SAFeed, EntryAI as SAEntryAI
 from ..utils.filters import apply_date_filter_to_entries_query
+from .auth import get_current_user
 
 router = APIRouter()
 
@@ -20,6 +21,7 @@ class Entry(BaseModel):
     feed_id: str
     feed_title: Optional[str] = None
     title: Optional[str] = None
+    translated_title: Optional[str] = None
     url: Optional[str] = None
     author: Optional[str] = None
     summary: Optional[str] = None
@@ -42,6 +44,7 @@ async def list_entries(
     group_name: Optional[str] = Query(default=None),
     unread_only: Optional[bool] = Query(default=None),
     is_starred: Optional[bool] = Query(default=None),
+    high_quality_only: Optional[bool] = Query(default=None),
     date_range: Optional[str] = Query(default=None),
     time_field: Optional[str] = Query(default=None),
     limit: Optional[int] = Query(default=100),
@@ -49,8 +52,9 @@ async def list_entries(
     order_by: Optional[str] = Query(default="created_at"),
     order: Optional[str] = Query(default="desc"),
     session: AsyncSession = Depends(get_session),
+    current_user = Depends(get_current_user),
 ) -> List[Entry]:
-    q = select(SAEntry, SAFeed.title).where(SAEntry.feed_id == SAFeed.id)
+    q = select(SAEntry, SAFeed.title, SAEntryAI.translation).outerjoin(SAEntryAI, SAEntry.id == SAEntryAI.entry_id).where(SAEntry.feed_id == SAFeed.id)
     if feed_id is not None:
         q = q.where(SAEntry.feed_id == feed_id)
     if group_name is not None:
@@ -59,6 +63,10 @@ async def list_entries(
         q = q.where(SAEntry.is_read == False)
     if is_starred is not None:
         q = q.where(SAEntry.is_starred == bool(is_starred))
+    if high_quality_only:
+        # Mock high quality filter if quality_score is not set or use actual score > 60
+        from sqlalchemy import or_
+        q = q.where(or_(SAEntry.quality_score >= 60, SAEntry.word_count >= 100))
     q = apply_date_filter_to_entries_query(q, date_range, time_field, SAEntry.created_at, SAEntry.published_at)
     if order_by == "published_at":
         q = q.order_by(desc(SAEntry.published_at) if order == "desc" else asc(SAEntry.published_at))
@@ -67,13 +75,25 @@ async def list_entries(
     q = q.offset(offset).limit(min(limit, 1000))
     rows = await session.execute(q)
     items: List[Entry] = []
-    for e, feed_title in rows.all():
+    import json
+    for e, feed_title, translation_json in rows.all():
+        translated_title = None
+        if translation_json:
+            try:
+                t_data = json.loads(translation_json)
+                if "title" in t_data and isinstance(t_data["title"], dict):
+                    tt = t_data["title"].get("zh-CN") or list(t_data["title"].values())[0]
+                    translated_title = tt
+            except Exception:
+                pass
+                
         items.append(
             Entry(
                 id=e.id,
                 feed_id=e.feed_id,
                 feed_title=feed_title,
                 title=e.title,
+                translated_title=translated_title,
                 url=e.url,
                 author=e.author,
                 summary=e.summary,
@@ -91,18 +111,31 @@ async def list_starred_entries(
     limit: Optional[int] = Query(default=100),
     offset: Optional[int] = Query(default=0),
     session: AsyncSession = Depends(get_session),
+    current_user = Depends(get_current_user),
 ) -> List[Entry]:
-    q = select(SAEntry, SAFeed.title).where(SAEntry.feed_id == SAFeed.id, SAEntry.is_starred == True)
+    q = select(SAEntry, SAFeed.title, SAEntryAI.translation).outerjoin(SAEntryAI, SAEntry.id == SAEntryAI.entry_id).where(SAEntry.feed_id == SAFeed.id, SAEntry.is_starred == True)
     q = q.order_by(desc(SAEntry.created_at)).offset(offset).limit(min(limit, 1000))
     rows = await session.execute(q)
     items: List[Entry] = []
-    for e, feed_title in rows.all():
+    import json
+    for e, feed_title, translation_json in rows.all():
+        translated_title = None
+        if translation_json:
+            try:
+                t_data = json.loads(translation_json)
+                if "title" in t_data and isinstance(t_data["title"], dict):
+                    tt = t_data["title"].get("zh-CN") or list(t_data["title"].values())[0]
+                    translated_title = tt
+            except Exception:
+                pass
+                
         items.append(
             Entry(
                 id=e.id,
                 feed_id=e.feed_id,
                 feed_title=feed_title,
                 title=e.title,
+                translated_title=translated_title,
                 url=e.url,
                 author=e.author,
                 summary=e.summary,
@@ -116,22 +149,39 @@ async def list_starred_entries(
     return items
 
 @router.get("/entries/starred/stats")
-async def get_starred_stats(session: AsyncSession = Depends(get_session)) -> dict:
+async def get_starred_stats(session: AsyncSession = Depends(get_session), current_user = Depends(get_current_user)) -> dict:
     count = (await session.execute(select(func.count(SAEntry.id)).where(SAEntry.is_starred == True))).scalar() or 0
     return {"count": int(count)}
 
 @router.get("/entries/{id}", response_model=Entry)
-async def get_entry(id: str, session: AsyncSession = Depends(get_session)) -> Entry:
-    q = await session.execute(select(SAEntry, SAFeed.title).where(SAEntry.id == id, SAEntry.feed_id == SAFeed.id))
+async def get_entry(id: str, session: AsyncSession = Depends(get_session), current_user = Depends(get_current_user)) -> Entry:
+    q = await session.execute(
+        select(SAEntry, SAFeed.title, SAEntryAI.translation)
+        .outerjoin(SAEntryAI, SAEntry.id == SAEntryAI.entry_id)
+        .where(SAEntry.id == id, SAEntry.feed_id == SAFeed.id)
+    )
     row = q.first()
     if not row:
         raise HTTPException(status_code=404)
-    e, feed_title = row
+    e, feed_title, translation_json = row
+    
+    translated_title = None
+    if translation_json:
+        try:
+            import json
+            t_data = json.loads(translation_json)
+            if "title" in t_data and isinstance(t_data["title"], dict):
+                tt = t_data["title"].get("zh-CN") or list(t_data["title"].values())[0]
+                translated_title = tt
+        except Exception:
+            pass
+
     return Entry(
         id=e.id,
         feed_id=e.feed_id,
         feed_title=feed_title,
         title=e.title,
+        translated_title=translated_title,
         url=e.url,
         author=e.author,
         summary=e.summary,
@@ -144,7 +194,7 @@ async def get_entry(id: str, session: AsyncSession = Depends(get_session)) -> En
 
 @router.put("/entries/{id}", response_model=Entry)
 @router.patch("/entries/{id}", response_model=Entry)
-async def update_entry(id: str, payload: UpdateEntryRequest, session: AsyncSession = Depends(get_session)) -> Entry:
+async def update_entry(id: str, payload: UpdateEntryRequest, session: AsyncSession = Depends(get_session), current_user = Depends(get_current_user)) -> Entry:
     q = await session.execute(select(SAEntry, SAFeed.title).where(SAEntry.id == id, SAEntry.feed_id == SAFeed.id))
     row = q.first()
     if not row:
@@ -172,7 +222,7 @@ async def update_entry(id: str, payload: UpdateEntryRequest, session: AsyncSessi
     )
 
 @router.post("/entries/{id}/read")
-async def mark_as_read(id: str, session: AsyncSession = Depends(get_session)) -> dict:
+async def mark_as_read(id: str, session: AsyncSession = Depends(get_session), current_user = Depends(get_current_user)) -> dict:
     q = await session.execute(select(SAEntry).where(SAEntry.id == id))
     e = q.scalar_one_or_none()
     if not e:
@@ -183,7 +233,7 @@ async def mark_as_read(id: str, session: AsyncSession = Depends(get_session)) ->
     return {"success": True}
 
 @router.post("/entries/{id}/unread")
-async def mark_as_unread(id: str, session: AsyncSession = Depends(get_session)) -> dict:
+async def mark_as_unread(id: str, session: AsyncSession = Depends(get_session), current_user = Depends(get_current_user)) -> dict:
     q = await session.execute(select(SAEntry).where(SAEntry.id == id))
     e = q.scalar_one_or_none()
     if not e:
@@ -194,7 +244,7 @@ async def mark_as_unread(id: str, session: AsyncSession = Depends(get_session)) 
     return {"success": True}
 
 @router.post("/entries/{id}/star")
-async def star_entry(id: str, session: AsyncSession = Depends(get_session)) -> dict:
+async def star_entry(id: str, session: AsyncSession = Depends(get_session), current_user = Depends(get_current_user)) -> dict:
     q = await session.execute(select(SAEntry).where(SAEntry.id == id))
     e = q.scalar_one_or_none()
     if not e:
@@ -205,7 +255,7 @@ async def star_entry(id: str, session: AsyncSession = Depends(get_session)) -> d
     return {"success": True}
 
 @router.post("/entries/{id}/unstar")
-async def unstar_entry(id: str, session: AsyncSession = Depends(get_session)) -> dict:
+async def unstar_entry(id: str, session: AsyncSession = Depends(get_session), current_user = Depends(get_current_user)) -> dict:
     q = await session.execute(select(SAEntry).where(SAEntry.id == id))
     e = q.scalar_one_or_none()
     if not e:
@@ -216,7 +266,7 @@ async def unstar_entry(id: str, session: AsyncSession = Depends(get_session)) ->
     return {"success": True}
 
 @router.api_route("/entries/{id}/star", methods=["DELETE"])
-async def unstar_entry_alias(id: str, session: AsyncSession = Depends(get_session)) -> dict:
+async def unstar_entry_alias(id: str, session: AsyncSession = Depends(get_session), current_user = Depends(get_current_user)) -> dict:
     q = await session.execute(select(SAEntry).where(SAEntry.id == id))
     e = q.scalar_one_or_none()
     if not e:
@@ -227,7 +277,7 @@ async def unstar_entry_alias(id: str, session: AsyncSession = Depends(get_sessio
     return {"success": True}
 
 @router.post("/entries/bulk-star")
-async def bulk_star_entries(payload: Union[dict, list] = Body(...), session: AsyncSession = Depends(get_session)) -> dict:
+async def bulk_star_entries(payload: Union[dict, list] = Body(...), session: AsyncSession = Depends(get_session), current_user = Depends(get_current_user)) -> dict:
     ids: list[str] = []
     if isinstance(payload, list):
         ids = [str(i) for i in payload]
@@ -243,7 +293,7 @@ async def bulk_star_entries(payload: Union[dict, list] = Body(...), session: Asy
     return {"success": True}
 
 @router.post("/entries/bulk-unstar")
-async def bulk_unstar_entries(payload: Union[dict, list] = Body(...), session: AsyncSession = Depends(get_session)) -> dict:
+async def bulk_unstar_entries(payload: Union[dict, list] = Body(...), session: AsyncSession = Depends(get_session), current_user = Depends(get_current_user)) -> dict:
     ids: list[str] = []
     if isinstance(payload, list):
         ids = [str(i) for i in payload]

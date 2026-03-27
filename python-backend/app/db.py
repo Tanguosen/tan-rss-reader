@@ -1,6 +1,7 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
+from .config import env_settings
 
 class Base(DeclarativeBase):
     pass
@@ -8,7 +9,7 @@ class Base(DeclarativeBase):
 from pathlib import Path
 
 def database_url() -> str:
-    url = os.getenv("PY_BACKEND_DB_URL")
+    url = env_settings.db_url or os.getenv("PY_BACKEND_DB_URL")
     if url:
         return url
     # Use path relative to this file to ensure consistency regardless of CWD

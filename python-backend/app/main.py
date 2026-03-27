@@ -21,6 +21,9 @@ from .handlers.subscriptions import router as subs_router
 from .handlers.categories import router as categories_router
 from .handlers.tags import router as tags_router
 from .handlers.vector import router as vector_router
+from .handlers.source_packs import router as packs_router
+from .handlers.membership import router as membership_router
+from .handlers.prompts import router as prompts_router
 
 app = FastAPI()
 
@@ -54,6 +57,9 @@ app.include_router(subs_router, prefix="/api")
 app.include_router(categories_router, prefix="/api")
 app.include_router(tags_router, prefix="/api")
 app.include_router(vector_router, prefix="/api")
+app.include_router(packs_router, prefix="/api")
+app.include_router(membership_router, prefix="/api")
+app.include_router(prompts_router, prefix="/api")
 
 @app.on_event("startup")
 async def on_startup():
@@ -61,6 +67,14 @@ async def on_startup():
         await conn.run_sync(SABase.metadata.create_all)
         try:
             await conn.exec_driver_sql("ALTER TABLE app_settings ADD COLUMN branding_toggle BOOLEAN DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            await conn.exec_driver_sql("ALTER TABLE entries ADD COLUMN quality_score INTEGER")
+        except Exception:
+            pass
+        try:
+            await conn.exec_driver_sql("ALTER TABLE ai_configs ADD COLUMN auto_quality_scoring BOOLEAN DEFAULT 1")
         except Exception:
             pass
     session = SessionLocal()

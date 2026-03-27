@@ -60,6 +60,7 @@ class TaskScheduler:
             "feed-refresh": ScheduledTask(id="feed-refresh", name="RSS Feed Refresh", task_type="FeedRefresh"),
             "icon-cleanup": ScheduledTask(id="icon-cleanup", name="Icon Cleanup", task_type="IconCleanup"),
             "health-check": ScheduledTask(id="health-check", name="Health Check", task_type="HealthCheck"),
+            "quality-scoring": ScheduledTask(id="quality-scoring", name="AI Quality Scoring", task_type="QualityScoring"),
         }
         self.history: dict[str, list[TaskExecutionResult]] = {tid: [] for tid in self.tasks.keys()}
         self.scheduler = None
@@ -95,19 +96,75 @@ class TaskScheduler:
         duration_ms = int((time.time() - start_ts) * 1000)
         return TaskExecutionResult(task_id="feed-refresh", task_name="RSS Feed Refresh", started_at=started_at, completed_at=completed_at, success=success, message=message, duration_ms=duration_ms)
 
+    async def score_quality_for_entries(self, session: AsyncSession) -> TaskExecutionResult:
+        import time
+        from .ai import score_article_quality, AI_CFG
+        from ..models import Entry
+        
+        start_ts = time.time()
+        started_at = datetime.utcnow().isoformat() + "Z"
+        
+        # Check if AI quality scoring is enabled globally
+        if not AI_CFG["features"].get("auto_quality_scoring", True):
+            return TaskExecutionResult(
+                task_id="quality-scoring", 
+                task_name="AI Quality Scoring", 
+                started_at=started_at, 
+                completed_at=datetime.utcnow().isoformat() + "Z", 
+                success=True, 
+                message="AI Quality Scoring is disabled in settings.", 
+                duration_ms=0
+            )
+        
+        # Find entries without a quality score
+        q = select(Entry).where(Entry.quality_score == None).limit(50)
+        rows = (await session.execute(q)).scalars().all()
+        
+        ok = 0
+        err = 0
+        for entry in rows:
+            try:
+                # Calculate via AI
+                content_text = entry.content or entry.summary or ""
+                score = await score_article_quality(entry.title or "", content_text)
+                entry.quality_score = score
+                await session.commit()
+                ok += 1
+            except Exception as e:
+                err += 1
+                continue
+                
+        message = f"Scored {len(rows)} entries, {ok} successful, {err} failed"
+        success = err == 0
+        completed_at = datetime.utcnow().isoformat() + "Z"
+        duration_ms = int((time.time() - start_ts) * 1000)
+        return TaskExecutionResult(task_id="quality-scoring", task_name="AI Quality Scoring", started_at=started_at, completed_at=completed_at, success=success, message=message, duration_ms=duration_ms)
+
     def start_scheduler(self) -> dict:
         if not _aps_available:
             return {"success": False, "running": False, "message": "apscheduler not installed"}
         if self.scheduler is None:
             self.scheduler = AsyncIOScheduler()
         minutes = max(1, int(getattr(SETTINGS, "fetch_interval_minutes", 15) or 15))
+        
         async def _wrap_job():
             async with SessionLocal() as s:
                 try:
                     await self.refresh_all_feeds(s)
                 except Exception:
                     pass
+
+        async def _wrap_scoring_job():
+            async with SessionLocal() as s:
+                try:
+                    await self.score_quality_for_entries(s)
+                except Exception:
+                    pass
+                    
         self.scheduler.add_job(_wrap_job, IntervalTrigger(minutes=minutes), id="feed-refresh-job", replace_existing=True)
+        # Score quality slightly more frequently or concurrently
+        self.scheduler.add_job(_wrap_scoring_job, IntervalTrigger(minutes=5), id="quality-scoring-job", replace_existing=True)
+        
         if not self.scheduler.running:
             self.scheduler.start()
         return {"success": True, "running": True, "interval_minutes": minutes}
@@ -140,6 +197,10 @@ class TaskScheduler:
             payload = health_payload()
             message = f"Health ok: {payload.get('status')}"
             success = True
+        elif task_id == "quality-scoring":
+            result = await self.score_quality_for_entries(session)
+            message = result.message
+            success = result.success
         else:
             message = "Unknown task"
             success = False

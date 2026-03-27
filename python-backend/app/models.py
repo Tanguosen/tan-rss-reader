@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, Integer, DateTime, Text, Boolean, ForeignKey
+from sqlalchemy import String, Integer, DateTime, Text, Boolean, ForeignKey, UniqueConstraint
 from datetime import datetime
 from typing import Optional
 from .db import Base
@@ -9,7 +9,7 @@ class Feed(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     url: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    category: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # category field deprecated - use Channel instead for organization
     favicon: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     update_interval: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     last_updated: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -34,6 +34,8 @@ class Entry(Base):
     is_starred: Mapped[bool] = mapped_column(Boolean, default=False)
     reading_time: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     word_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    quality_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    dedup_key: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
 
 class SiteIcon(Base):
     __tablename__ = "site_icons"
@@ -64,6 +66,16 @@ class RSSHubConfig(Base):
     last_tested: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     response_time: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class AIDailyDigest(Base):
+    __tablename__ = "ai_daily_digests"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    date_str: Mapped[str] = mapped_column(String, index=True)  # YYYY-MM-DD
+    content: Mapped[str] = mapped_column(Text)
+    references: Mapped[str] = mapped_column(Text)  # JSON string
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -106,6 +118,7 @@ class AIConfigRow(Base):
     auto_summary: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_translation: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_title_translation: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_quality_scoring: Mapped[bool] = mapped_column(Boolean, default=True)
     translation_language: Mapped[str] = mapped_column(String, default="zh")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -113,8 +126,9 @@ class AIConfigRow(Base):
 class Channel(Base):
     __tablename__ = "channels"
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str] = mapped_column(String, unique=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    icon_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cover_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     is_public: Mapped[bool] = mapped_column(Boolean, default=True)
     owner_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -162,11 +176,81 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+class UserMembership(Base):
+    __tablename__ = "user_memberships"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), unique=True, index=True)
+    tier: Mapped[str] = mapped_column(String, default="free")  # "free", "plus", "pro"
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class UserUsage(Base):
+    __tablename__ = "user_usages"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    date_str: Mapped[str] = mapped_column(String, index=True)  # YYYY-MM-DD
+    ai_calls: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class UserAIPrompt(Base):
+    __tablename__ = "user_ai_prompts"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    prompt_type: Mapped[str] = mapped_column(String) # e.g. "summary", "translate"
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
 class Subscription(Base):
     __tablename__ = "subscriptions"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
     channel_id: Mapped[str] = mapped_column(String, ForeignKey("channels.id"), index=True)
     notify: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class UserEntryHistory(Base):
+    __tablename__ = "user_entry_history"
+    __table_args__ = (
+        UniqueConstraint("user_id", "entry_id", name="uq_user_entry_history_user_entry"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    entry_id: Mapped[str] = mapped_column(String, ForeignKey("entries.id"), index=True)
+    view_count: Mapped[int] = mapped_column(Integer, default=1)
+    first_viewed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_viewed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class UserEntryState(Base):
+    __tablename__ = "user_entry_states"
+    __table_args__ = (
+        UniqueConstraint("user_id", "entry_id", name="uq_user_entry_states_user_entry"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    entry_id: Mapped[str] = mapped_column(String, ForeignKey("entries.id"), index=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_starred: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class SourcePack(Base):
+    __tablename__ = "source_packs"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    slug: Mapped[Optional[str]] = mapped_column(String, unique=True)
+    sources_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_by: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    is_public: Mapped[bool] = mapped_column(Boolean, default=True)
+    install_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

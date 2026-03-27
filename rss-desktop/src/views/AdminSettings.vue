@@ -48,6 +48,7 @@ const localConfig = ref({
     auto_summary: false,
     auto_translation: false,
     auto_title_translation: false,
+    auto_quality_scoring: true,
     translation_language: 'zh'
   }
 })
@@ -149,6 +150,7 @@ function syncFromStore() {
     auto_summary: features.auto_summary ?? localConfig.value.features.auto_summary,
     auto_translation: features.auto_translation ?? localConfig.value.features.auto_translation,
     auto_title_translation: features.auto_title_translation ?? localConfig.value.features.auto_title_translation,
+    auto_quality_scoring: features.auto_quality_scoring ?? localConfig.value.features.auto_quality_scoring,
     translation_language: features.translation_language ?? localConfig.value.features.translation_language
   }
 }
@@ -581,6 +583,18 @@ async function handleAddRss() {
           <span class="icon">✨</span>
           {{ t('settings.aiFeatures') }}
         </h3>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input
+              v-model="localConfig.features.auto_quality_scoring"
+              type="checkbox"
+              class="form-checkbox"
+            />
+            自动进行 AI 质量评分 (开启后将在后台异步为新文章打分，耗费一定Token)
+            <span class="checkbox-hint">关闭时将使用基于字数的启发式免费规则进行打分</span>
+          </label>
+        </div>
+
         <div class="form-group">
           <label class="checkbox-label">
             <input

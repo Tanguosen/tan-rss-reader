@@ -42,13 +42,35 @@ class ClusteringService:
         if not embeddings:
             return []
 
-        X = np.array(embeddings)
+        X = np.array(embeddings, dtype=np.float32)
         
-        # Normalize vectors if not already? 
-        # Embedding model usually returns normalized vectors.
-        # But for safety, we can normalize.
-        # norm = np.linalg.norm(X, axis=1, keepdims=True)
-        # X = X / (norm + 1e-10)
+        # 清洗异常值：将 NaN/Inf 替换为 0
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        # 限制数值范围，防止溢出
+        X = np.clip(X, -1e6, 1e6)
+        
+        # 归一化向量（cosine 距离要求单位向量，防止零向量导致除零溢出）
+        norms = np.linalg.norm(X, axis=1, keepdims=True)
+        # 零向量用 1 替代，避免除零
+        norms[norms == 0] = 1.0
+        X = X / norms
+        
+        # 再次清洗归一化后的异常值
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        # 过滤掉全零向量（embedding 失败的条目）
+        valid_mask = np.any(X != 0, axis=1)
+        if not np.all(valid_mask):
+            invalid_count = np.sum(~valid_mask)
+            logger.warning(f"Skipping {invalid_count} zero/invalid embedding vectors")
+            X = X[valid_mask]
+            ids = [ids[i] for i in range(len(ids)) if valid_mask[i]]
+            titles = [titles[i] for i in range(len(titles)) if valid_mask[i]]
+            entries = [entries[i] for i in range(len(entries)) if valid_mask[i]]
+        
+        if len(X) == 0:
+            return []
 
         # 3. Cluster
         # eps: The maximum distance between two samples for one to be considered as in the neighborhood of the other.

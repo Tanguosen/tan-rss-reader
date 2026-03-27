@@ -15,6 +15,7 @@ export interface AIFeatureConfig {
   auto_summary: boolean
   auto_translation: boolean
   auto_title_translation: boolean
+  auto_quality_scoring: boolean
   translation_language: string
 }
 
@@ -44,6 +45,7 @@ const createDefaultConfig = (): AIConfig => ({
     auto_summary: false,
     auto_translation: false,
     auto_title_translation: false,
+    auto_quality_scoring: true,
     translation_language: 'zh'
   }
 })

@@ -20,10 +20,10 @@ async def seed():
         
         # 1. Create Feeds if not exist
         feeds_data = [
-            {"title": "TechCrunch", "url": "https://techcrunch.com/feed/", "category": "Tech"},
-            {"title": "The Verge", "url": "https://www.theverge.com/rss/index.xml", "category": "Tech"},
-            {"title": "Hacker News", "url": "https://news.ycombinator.com/rss", "category": "Tech"},
-            {"title": "BBC News", "url": "http://feeds.bbci.co.uk/news/world/rss.xml", "category": "News"},
+            {"title": "TechCrunch", "url": "https://techcrunch.com/feed/"},
+            {"title": "The Verge", "url": "https://www.theverge.com/rss/index.xml"},
+            {"title": "Hacker News", "url": "https://news.ycombinator.com/rss"},
+            {"title": "BBC News", "url": "http://feeds.bbci.co.uk/news/world/rss.xml"},
         ]
         
         created_feeds = []
@@ -39,7 +39,6 @@ async def seed():
                     id=str(uuid4()),
                     title=fd["title"],
                     url=fd["url"],
-                    category=fd["category"],
                     created_at=datetime.utcnow(),
                     updated_at=datetime.utcnow()
                 )

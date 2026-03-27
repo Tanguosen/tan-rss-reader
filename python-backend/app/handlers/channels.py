@@ -7,9 +7,10 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, asc, delete
 from ..db import SessionLocal
-from ..models import Channel as SAChannel, ChannelSource as SAChannelSource, Feed as SAFeed, Entry as SAEntry, Category as SACategory, Tag as SATag, ChannelTag as SAChannelTag
+from ..models import Channel as SAChannel, ChannelSource as SAChannelSource, Feed as SAFeed, Entry as SAEntry, Category as SACategory, Tag as SATag, ChannelTag as SAChannelTag, UserEntryState as SAUserEntryState
 from ..utils.filters import apply_date_filter_to_entries_query
-from .auth import get_current_admin
+from .auth import get_current_user, get_current_admin, get_optional_user
+from ..user_entry_state import bulk_mark_read_for_entries, read_value, starred_value, unread_filter, with_user_entry_state
 
 router = APIRouter()
 
@@ -39,6 +40,7 @@ class Channel(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
+    icon_url: Optional[str] = None
     cover_url: Optional[str] = None
     is_public: bool
     owner_id: Optional[str] = None
@@ -52,6 +54,7 @@ class Channel(BaseModel):
 class CreateChannelRequest(BaseModel):
     name: str
     description: Optional[str] = None
+    icon_url: Optional[str] = None
     cover_url: Optional[str] = None
     is_public: Optional[bool] = True
     owner_id: Optional[str] = None
@@ -61,6 +64,7 @@ class CreateChannelRequest(BaseModel):
 class UpdateChannelRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    icon_url: Optional[str] = None
     cover_url: Optional[str] = None
     is_public: Optional[bool] = None
     owner_id: Optional[str] = None
@@ -76,7 +80,6 @@ class ChannelSourceItem(BaseModel):
     feed_id: str
     url: str
     title: Optional[str] = None
-    group_name: Optional[str] = None
     favicon_url: Optional[str] = None
     order_index: Optional[int] = None
     weight: Optional[int] = None
@@ -102,6 +105,7 @@ async def channel_square(
     limit: Optional[int] = Query(default=50),
     offset: Optional[int] = Query(default=0),
     session: AsyncSession = Depends(get_session),
+    current_user = Depends(get_optional_user),
 ) -> List[Channel]:
     query = select(SAChannel).where(SAChannel.is_public == True)
     if q:
@@ -123,6 +127,18 @@ async def channel_square(
         if cid not in tags_map:
             tags_map[cid] = []
         tags_map[cid].append(TagInfo(id=tag.id, name=tag.name))
+
+    fallback_icons = {}
+    channels_missing_icons = [c.id for c in rows if not c.icon_url]
+    if channels_missing_icons:
+        # Get first feed for each channel
+        sq = select(SAChannelSource.channel_id, SAFeed.favicon).join(SAFeed, SAChannelSource.feed_id == SAFeed.id).where(
+            SAChannelSource.channel_id.in_(channels_missing_icons)
+        ).where(SAFeed.favicon != None).order_by(SAChannelSource.order_index, SAChannelSource.created_at)
+        res = (await session.execute(sq)).all()
+        for cid, fav in res:
+            if cid not in fallback_icons:
+                fallback_icons[cid] = fav
 
     items: List[Channel] = []
     for c in rows:
@@ -149,6 +165,7 @@ async def channel_square(
                 id=c.id,
                 name=c.name,
                 description=c.description,
+                icon_url=c.icon_url or fallback_icons.get(c.id),
                 cover_url=c.cover_url,
                 is_public=bool(c.is_public),
                 owner_id=c.owner_id,
@@ -168,9 +185,11 @@ async def list_channels(
     limit: Optional[int] = Query(default=50),
     offset: Optional[int] = Query(default=0),
     session: AsyncSession = Depends(get_session),
-    admin=Depends(get_current_admin)
+    user=Depends(get_current_user)
 ) -> List[Channel]:
     q = select(SAChannel)
+    if user.role != "admin":
+        q = q.where(SAChannel.owner_id == user.id)
     if is_public is not None:
         q = q.where(SAChannel.is_public == bool(is_public))
     q = q.order_by(desc(SAChannel.updated_at)).offset(offset).limit(min(limit, 1000))
@@ -191,6 +210,19 @@ async def list_channels(
             tags_map[cid] = []
         tags_map[cid].append(TagInfo(id=tag.id, name=tag.name))
 
+    # Optional: fetch first source favicon for dynamic icon fallback
+    fallback_icons = {}
+    channels_missing_icons = [c.id for c in rows if not c.icon_url]
+    if channels_missing_icons:
+        # Get first feed for each channel
+        sq = select(SAChannelSource.channel_id, SAFeed.favicon).join(SAFeed, SAChannelSource.feed_id == SAFeed.id).where(
+            SAChannelSource.channel_id.in_(channels_missing_icons)
+        ).where(SAFeed.favicon != None).order_by(SAChannelSource.order_index, SAChannelSource.created_at)
+        res = (await session.execute(sq)).all()
+        for cid, fav in res:
+            if cid not in fallback_icons:
+                fallback_icons[cid] = fav
+
     items: List[Channel] = []
     for c in rows:
         items.append(
@@ -198,6 +230,7 @@ async def list_channels(
                 id=c.id,
                 name=c.name,
                 description=c.description,
+                icon_url=c.icon_url or fallback_icons.get(c.id),
                 cover_url=c.cover_url,
                 is_public=bool(c.is_public),
                 owner_id=c.owner_id,
@@ -210,16 +243,17 @@ async def list_channels(
     return items
 
 @router.post("/admin/channels", response_model=Channel)
-async def create_channel(payload: CreateChannelRequest, session: AsyncSession = Depends(get_session), admin=Depends(get_current_admin)) -> Channel:
+async def create_channel(payload: CreateChannelRequest, session: AsyncSession = Depends(get_session), user=Depends(get_current_user)) -> Channel:
     cid = str(uuid4())
     now = datetime.utcnow()
     row = SAChannel(
         id=cid,
         name=payload.name,
         description=payload.description,
+        icon_url=payload.icon_url,
         cover_url=payload.cover_url,
         is_public=bool(payload.is_public) if payload.is_public is not None else True,
-        owner_id=payload.owner_id,
+        owner_id=payload.owner_id if user.role == "admin" and payload.owner_id else user.id,
         category_id=payload.category_id,
         created_at=now,
         updated_at=now,
@@ -243,6 +277,7 @@ async def create_channel(payload: CreateChannelRequest, session: AsyncSession = 
         id=row.id,
         name=row.name,
         description=row.description,
+        icon_url=row.icon_url,
         cover_url=row.cover_url,
         is_public=bool(row.is_public),
         owner_id=row.owner_id,
@@ -253,11 +288,13 @@ async def create_channel(payload: CreateChannelRequest, session: AsyncSession = 
     )
 
 @router.get("/admin/channels/{id}", response_model=Channel)
-async def get_channel(id: str, session: AsyncSession = Depends(get_session), admin=Depends(get_current_admin)) -> Channel:
+async def get_channel(id: str, session: AsyncSession = Depends(get_session), user=Depends(get_current_user)) -> Channel:
     q = await session.execute(select(SAChannel).where(SAChannel.id == id))
     c = q.scalar_one_or_none()
     if not c:
         raise HTTPException(status_code=404)
+    if user.role != "admin" and c.owner_id != user.id:
+        raise HTTPException(status_code=403)
         
     # Fetch tags
     tags_q = select(SATag).join(SAChannelTag, SAChannelTag.tag_id == SATag.id).where(SAChannelTag.channel_id == id)
@@ -268,6 +305,7 @@ async def get_channel(id: str, session: AsyncSession = Depends(get_session), adm
         id=c.id,
         name=c.name,
         description=c.description,
+        icon_url=c.icon_url,
         cover_url=c.cover_url,
         is_public=bool(c.is_public),
         owner_id=c.owner_id,
@@ -279,15 +317,19 @@ async def get_channel(id: str, session: AsyncSession = Depends(get_session), adm
 
 @router.patch("/admin/channels/{id}", response_model=Channel)
 @router.put("/admin/channels/{id}", response_model=Channel)
-async def update_channel(id: str, payload: UpdateChannelRequest, session: AsyncSession = Depends(get_session), admin=Depends(get_current_admin)) -> Channel:
+async def update_channel(id: str, payload: UpdateChannelRequest, session: AsyncSession = Depends(get_session), user=Depends(get_current_user)) -> Channel:
     q = await session.execute(select(SAChannel).where(SAChannel.id == id))
     c = q.scalar_one_or_none()
     if not c:
         raise HTTPException(status_code=404)
+    if user.role != "admin" and c.owner_id != user.id:
+        raise HTTPException(status_code=403)
     if payload.name is not None:
         c.name = payload.name
     if payload.description is not None:
         c.description = payload.description
+    if payload.icon_url is not None:
+        c.icon_url = payload.icon_url
     if payload.cover_url is not None:
         c.cover_url = payload.cover_url
     if payload.is_public is not None:
@@ -315,6 +357,7 @@ async def update_channel(id: str, payload: UpdateChannelRequest, session: AsyncS
         id=c.id,
         name=c.name,
         description=c.description,
+        icon_url=c.icon_url,
         cover_url=c.cover_url,
         is_public=bool(c.is_public),
         owner_id=c.owner_id,
@@ -325,11 +368,13 @@ async def update_channel(id: str, payload: UpdateChannelRequest, session: AsyncS
     )
 
 @router.delete("/admin/channels/{id}")
-async def delete_channel(id: str, session: AsyncSession = Depends(get_session), admin=Depends(get_current_admin)) -> dict:
+async def delete_channel(id: str, session: AsyncSession = Depends(get_session), user=Depends(get_current_user)) -> dict:
     q = await session.execute(select(SAChannel).where(SAChannel.id == id))
     c = q.scalar_one_or_none()
     if not c:
         raise HTTPException(status_code=404)
+    if user.role != "admin" and c.owner_id != user.id:
+        raise HTTPException(status_code=403)
     await session.execute(delete(SAChannelSource).where(SAChannelSource.channel_id == id))
     await session.delete(c)
     await session.commit()
@@ -339,8 +384,16 @@ async def delete_channel(id: str, session: AsyncSession = Depends(get_session), 
 async def list_channel_sources(
     id: str,
     session: AsyncSession = Depends(get_session),
-    admin=Depends(get_current_admin)
+    user=Depends(get_current_user)
 ) -> List[ChannelSourceItem]:
+    # Check ownership
+    q_chan = await session.execute(select(SAChannel).where(SAChannel.id == id))
+    c = q_chan.scalar_one_or_none()
+    if not c:
+        raise HTTPException(status_code=404)
+    if user.role != "admin" and c.owner_id != user.id:
+        raise HTTPException(status_code=403)
+
     q = await session.execute(
         select(SAChannelSource, SAFeed).where(SAChannelSource.channel_id == id, SAChannelSource.feed_id == SAFeed.id).order_by(asc(SAChannelSource.order_index), desc(SAChannelSource.created_at))
     )
@@ -351,7 +404,6 @@ async def list_channel_sources(
                 feed_id=f.id,
                 url=f.url,
                 title=f.title,
-                group_name=f.category or "未分组",
                 favicon_url=f.favicon,
                 order_index=cs.order_index,
                 weight=cs.weight,
@@ -361,7 +413,14 @@ async def list_channel_sources(
     return items
 
 @router.post("/admin/channels/{id}/sources")
-async def add_channel_source(id: str, payload: ChannelSourceRequest, session: AsyncSession = Depends(get_session), admin=Depends(get_current_admin)) -> dict:
+async def add_channel_source(id: str, payload: ChannelSourceRequest, session: AsyncSession = Depends(get_session), user=Depends(get_current_user)) -> dict:
+    q_chan = await session.execute(select(SAChannel).where(SAChannel.id == id))
+    c = q_chan.scalar_one_or_none()
+    if not c:
+        raise HTTPException(status_code=404)
+    if user.role != "admin" and c.owner_id != user.id:
+        raise HTTPException(status_code=403)
+
     fq = await session.execute(select(SAFeed).where(SAFeed.id == payload.feed_id))
     f = fq.scalar_one_or_none()
     if not f:
@@ -381,15 +440,70 @@ async def add_channel_source(id: str, payload: ChannelSourceRequest, session: As
     return {"message": "Added"}
 
 @router.delete("/admin/channels/{id}/sources/{feed_id}")
-async def remove_channel_source(id: str, feed_id: str, session: AsyncSession = Depends(get_session), admin=Depends(get_current_admin)) -> dict:
+async def remove_channel_source(id: str, feed_id: str, session: AsyncSession = Depends(get_session), user=Depends(get_current_user)) -> dict:
+    q_chan = await session.execute(select(SAChannel).where(SAChannel.id == id))
+    c = q_chan.scalar_one_or_none()
+    if not c:
+        raise HTTPException(status_code=404)
+    if user.role != "admin" and c.owner_id != user.id:
+        raise HTTPException(status_code=403)
+
     await session.execute(delete(SAChannelSource).where(SAChannelSource.channel_id == id, SAChannelSource.feed_id == feed_id))
     await session.commit()
     return {"message": "Removed"}
+
+@router.post("/channels/{id}/refresh")
+async def refresh_channel(
+    id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Refresh all feeds in a channel by fetching latest entries."""
+    from ..services.rss_fetcher import fetch_feed as rss_fetch
+    feed_ids = (await session.execute(
+        select(SAChannelSource.feed_id).where(SAChannelSource.channel_id == id)
+    )).scalars().all()
+    if not feed_ids:
+        return {"refreshed": 0, "new_entries": 0}
+    total_new = 0
+    for fid in feed_ids:
+        try:
+            res = await rss_fetch(session, fid)
+            total_new += getattr(res, 'new_count', 0)
+        except Exception:
+            pass
+    return {"refreshed": len(feed_ids), "new_entries": total_new}
+
+
+@router.post("/channels/{id}/mark-all-read")
+async def mark_channel_all_read(
+    id: str,
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+) -> dict:
+    """Mark all entries in a channel as read for the current user."""
+    feed_ids = (await session.execute(
+        select(SAChannelSource.feed_id).where(SAChannelSource.channel_id == id)
+    )).scalars().all()
+    if not feed_ids:
+        return {"updated": 0}
+    entry_ids = (
+        await session.execute(select(SAEntry.id).where(SAEntry.feed_id.in_(feed_ids)))
+    ).scalars().all()
+    updated = await bulk_mark_read_for_entries(
+        session,
+        user.id,
+        entry_ids,
+        read=True,
+    )
+    await session.commit()
+    return {"updated": updated}
+
 
 @router.get("/channels/{id}/entries", response_model=List[Entry])
 async def channel_entries(
     id: str,
     unread_only: Optional[bool] = Query(default=None),
+    high_quality_only: Optional[bool] = Query(default=None),
     date_range: Optional[str] = Query(default=None),
     time_field: Optional[str] = Query(default=None),
     limit: Optional[int] = Query(default=100),
@@ -397,13 +511,18 @@ async def channel_entries(
     order_by: Optional[str] = Query(default="created_at"),
     order: Optional[str] = Query(default="desc"),
     session: AsyncSession = Depends(get_session),
+    current_user = Depends(get_optional_user),
 ) -> List[Entry]:
     rows = (await session.execute(select(SAChannelSource.feed_id).where(SAChannelSource.channel_id == id))).scalars().all()
     if not rows:
         return []
-    q = select(SAEntry, SAFeed.title).where(SAEntry.feed_id == SAFeed.id, SAEntry.feed_id.in_(rows))
+    q = select(SAEntry, SAFeed.title, SAUserEntryState).where(SAEntry.feed_id == SAFeed.id, SAEntry.feed_id.in_(rows))
+    q = with_user_entry_state(q, current_user.id if current_user else None, SAEntry)
     if unread_only:
-        q = q.where(SAEntry.is_read == False)
+        q = q.where(unread_filter(current_user.id if current_user else None, SAEntry))
+    if high_quality_only:
+        from sqlalchemy import or_
+        q = q.where(or_(SAEntry.quality_score >= 60, SAEntry.word_count >= 100))
     q = apply_date_filter_to_entries_query(q, date_range, time_field, SAEntry.created_at, SAEntry.published_at)
     if order_by == "published_at":
         q = q.order_by(desc(SAEntry.published_at) if order == "desc" else asc(SAEntry.published_at))
@@ -412,7 +531,7 @@ async def channel_entries(
     q = q.offset(offset).limit(min(limit, 1000))
     result = await session.execute(q)
     items: List[Entry] = []
-    for e, feed_title in result.all():
+    for e, feed_title, state in result.all():
         items.append(
             Entry(
                 id=e.id,
@@ -425,8 +544,8 @@ async def channel_entries(
                 content=e.content,
                 published_at=e.published_at.isoformat() + "Z" if e.published_at else None,
                 inserted_at=e.created_at.isoformat() + "Z" if e.created_at else None,
-                read=bool(e.is_read),
-                starred=bool(e.is_starred),
+                read=read_value(e, state, current_user.id if current_user else None),
+                starred=starred_value(e, state, current_user.id if current_user else None),
             )
         )
     return items

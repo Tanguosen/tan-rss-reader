@@ -10,6 +10,7 @@ from ..models import Feed as SAFeed, Entry as SAEntry, Channel as SAChannel, Cha
 from ..services.rss_fetcher import fetch_feed as rss_fetch
 from ..utils.filters import apply_date_filter_to_entries_query
 from .auth import get_optional_user, get_current_admin
+from ..user_entry_state import count_unread_for_feeds
 
 router = APIRouter()
 
@@ -21,7 +22,6 @@ class Feed(BaseModel):
     id: str
     url: str
     title: Optional[str] = None
-    group_name: str
     favicon_url: Optional[str] = None
     unread_count: int
     last_checked_at: Optional[str] = None
@@ -31,12 +31,10 @@ class Feed(BaseModel):
 class CreateFeedRequest(BaseModel):
     url: str
     title: Optional[str] = None
-    group_name: Optional[str] = None
     update_interval: Optional[int] = None
 
 class UpdateFeedRequest(BaseModel):
     title: Optional[str] = None
-    group_name: Optional[str] = None
     update_interval: Optional[int] = None
 
 @router.get("/feeds", response_model=List[Feed])
@@ -65,21 +63,17 @@ async def list_feeds(
             
         stmt = stmt.order_by(desc(SAFeed.created_at)).offset(offset).limit(limit)
         rows = (await session.execute(stmt)).all()
+        unread_map = await count_unread_for_feeds(session, [f.id for f, _, _ in rows], user.id)
         
         feeds = []
         for f, sub_id, channel_id in rows:
-            # Count unread
-            unread_q = select(func.count(SAEntry.id)).where(SAEntry.feed_id == f.id, SAEntry.is_read == False)
-            unread = (await session.execute(unread_q)).scalar() or 0
-            
             feeds.append(
                 Feed(
                     id=f.id,
                     url=f.url,
                     title=f.title,
-                    group_name=f.category or "未分组",
                     favicon_url=f.favicon,
-                    unread_count=int(unread),
+                    unread_count=int(unread_map.get(f.id, 0)),
                     last_checked_at=f.last_updated.isoformat() if f.last_updated else None,
                     last_error=f.last_status,
                     channel_id=channel_id
@@ -94,19 +88,17 @@ async def list_feeds(
         q = q.where(or_(SAFeed.title.ilike(f"%{search}%"), SAFeed.url.ilike(f"%{search}%")))
     q = q.offset(offset).limit(limit)
     rows = (await session.execute(q)).scalars().all()
+    unread_map = await count_unread_for_feeds(session, [f.id for f in rows], None)
     
     feeds = []
     for f in rows:
-        unread_q = select(func.count(SAEntry.id)).where(SAEntry.feed_id == f.id, SAEntry.is_read == False)
-        unread = (await session.execute(unread_q)).scalar() or 0
         feeds.append(
             Feed(
                 id=f.id,
                 url=f.url,
                 title=f.title,
-                group_name=f.category or "未分组",
                 favicon_url=f.favicon,
-                unread_count=int(unread),
+                unread_count=int(unread_map.get(f.id, 0)),
                 last_checked_at=f.last_updated.isoformat() if f.last_updated else None,
                 last_error=f.last_status,
             )
@@ -134,7 +126,6 @@ async def list_admin_feeds(
                 id=f.id,
                 url=f.url,
                 title=f.title,
-                group_name=f.category or "未分组",
                 favicon_url=f.favicon,
                 unread_count=0,
                 last_checked_at=f.last_updated.isoformat() if f.last_updated else None,
@@ -157,7 +148,6 @@ async def create_admin_feed(
             id=existing.id,
             url=existing.url,
             title=existing.title,
-            group_name=existing.category or "未分组",
             favicon_url=existing.favicon,
             unread_count=0,
             last_checked_at=existing.last_updated.isoformat() + "Z" if existing.last_updated else None,
@@ -166,16 +156,21 @@ async def create_admin_feed(
 
     fid = str(uuid4())
     title = payload.title if payload.title else payload.url
-    group = payload.group_name if payload.group_name else None
     now = datetime.utcnow()
+    
+    # Simple logic to guess a favicon URL based on feed URL root domain
+    from urllib.parse import urlparse
+    parsed = urlparse(payload.url)
+    guessed_favicon = None
+    if parsed.netloc:
+        guessed_favicon = f"{parsed.scheme}://{parsed.netloc}/favicon.ico"
     
     # Create Feed
     row = SAFeed(
         id=fid,
         title=title,
         url=payload.url,
-        category=group,
-        favicon=None,
+        favicon=guessed_favicon,
         update_interval=payload.update_interval,
         last_updated=None,
         last_status=None,
@@ -214,8 +209,7 @@ async def create_admin_feed(
         id=fid,
         url=payload.url,
         title=title,
-        group_name=group or "未分组",
-        favicon_url=None,
+        favicon_url=guessed_favicon,
         unread_count=0,
         last_checked_at=None,
         last_error=None,
@@ -235,8 +229,6 @@ async def update_admin_feed(
         raise HTTPException(status_code=404)
     if payload.title is not None:
         f.title = payload.title
-    if payload.group_name is not None:
-        f.category = payload.group_name
     if payload.update_interval is not None:
         f.update_interval = payload.update_interval
     f.updated_at = datetime.utcnow()
@@ -245,7 +237,6 @@ async def update_admin_feed(
         id=f.id,
         url=f.url,
         title=f.title,
-        group_name=f.category or "未分组",
         favicon_url=f.favicon,
         unread_count=0,
         last_checked_at=f.last_updated.isoformat() + "Z" if f.last_updated else None,
@@ -267,7 +258,6 @@ async def delete_admin_feed(
     return {"message": "Feed deleted successfully"}
 
 async def list_feeds(
-    group_name: Optional[str] = Query(default=None),
     date_range: Optional[str] = Query(default=None),
     time_field: Optional[str] = Query(default=None),
     limit: Optional[int] = Query(default=50),
@@ -285,23 +275,18 @@ async def list_feeds(
              .where(SASub.user_id == current.id)\
              .distinct()
 
-    if group_name is not None:
-        q = q.where(SAFeed.category == group_name)
     q = q.order_by(desc(SAFeed.created_at)).offset(offset).limit(min(limit, 1000))
     rows = (await session.execute(q)).scalars().all()
+    unread_map = await count_unread_for_feeds(session, [f.id for f in rows], current.id if current else None)
     feeds: List[Feed] = []
     for f in rows:
-        eq = select(func.count(SAEntry.id)).where(SAEntry.feed_id == f.id, SAEntry.is_read == False)
-        eq = apply_date_filter_to_entries_query(eq, date_range, time_field, SAEntry.created_at, SAEntry.published_at)
-        unread = (await session.execute(eq)).scalar() or 0
         feeds.append(
             Feed(
                 id=f.id,
                 url=f.url,
                 title=f.title,
-                group_name=f.category or "未分组",
                 favicon_url=f.favicon,
-                unread_count=int(unread),
+                unread_count=int(unread_map.get(f.id, 0)),
                 last_checked_at=f.last_updated.isoformat() + "Z" if f.last_updated else None,
                 last_error=f.last_status,
             )
@@ -354,7 +339,6 @@ async def create_feed(payload: CreateFeedRequest, current: Optional[SAUser] = De
             id=fid,
             url=existing.url,
             title=existing.title,
-            group_name=existing.category or "未分组",
             favicon_url=existing.favicon,
             unread_count=0,
             last_checked_at=existing.last_updated.isoformat() + "Z" if existing.last_updated else None,
@@ -363,13 +347,11 @@ async def create_feed(payload: CreateFeedRequest, current: Optional[SAUser] = De
         )
     fid = str(uuid4())
     title = payload.title if payload.title else payload.url
-    group = payload.group_name if payload.group_name else None
     now = datetime.utcnow()
     row = SAFeed(
         id=fid,
         title=title,
         url=payload.url,
-        category=group,
         favicon=None,
         update_interval=payload.update_interval,
         last_updated=None,
@@ -422,7 +404,6 @@ async def create_feed(payload: CreateFeedRequest, current: Optional[SAUser] = De
         id=fid,
         url=payload.url,
         title=title,
-        group_name=group or "未分组",
         favicon_url=None,
         unread_count=0,
         last_checked_at=None,
@@ -431,18 +412,16 @@ async def create_feed(payload: CreateFeedRequest, current: Optional[SAUser] = De
     )
 
 @router.get("/feeds/{id}", response_model=Feed)
-async def get_feed(id: str, session: AsyncSession = Depends(get_session)) -> Feed:
+async def get_feed(id: str, session: AsyncSession = Depends(get_session), current: Optional[SAUser] = Depends(get_optional_user)) -> Feed:
     q = await session.execute(select(SAFeed).where(SAFeed.id == id))
     f = q.scalar_one_or_none()
     if not f:
         raise HTTPException(status_code=404)
-    eq = select(func.count(SAEntry.id)).where(SAEntry.feed_id == id, SAEntry.is_read == False)
-    unread = (await session.execute(eq)).scalar() or 0
+    unread = (await count_unread_for_feeds(session, [id], current.id if current else None)).get(id, 0)
     return Feed(
         id=f.id,
         url=f.url,
         title=f.title,
-        group_name=f.category or "未分组",
         favicon_url=f.favicon,
         unread_count=int(unread),
         last_checked_at=f.last_updated.isoformat() + "Z" if f.last_updated else None,
@@ -451,26 +430,22 @@ async def get_feed(id: str, session: AsyncSession = Depends(get_session)) -> Fee
 
 @router.put("/feeds/{id}", response_model=Feed)
 @router.patch("/feeds/{id}", response_model=Feed)
-async def update_feed(id: str, payload: UpdateFeedRequest, session: AsyncSession = Depends(get_session)) -> Feed:
+async def update_feed(id: str, payload: UpdateFeedRequest, session: AsyncSession = Depends(get_session), current: Optional[SAUser] = Depends(get_optional_user)) -> Feed:
     q = await session.execute(select(SAFeed).where(SAFeed.id == id))
     f = q.scalar_one_or_none()
     if not f:
         raise HTTPException(status_code=404)
     if payload.title is not None:
         f.title = payload.title
-    if payload.group_name is not None:
-        f.category = payload.group_name
     if payload.update_interval is not None:
         f.update_interval = payload.update_interval
     f.updated_at = datetime.utcnow()
     await session.commit()
-    eq = select(func.count(SAEntry.id)).where(SAEntry.feed_id == id, SAEntry.is_read == False)
-    unread = (await session.execute(eq)).scalar() or 0
+    unread = (await count_unread_for_feeds(session, [id], current.id if current else None)).get(id, 0)
     return Feed(
         id=f.id,
         url=f.url,
         title=f.title,
-        group_name=f.category or "未分组",
         favicon_url=f.favicon,
         unread_count=int(unread),
         last_checked_at=f.last_updated.isoformat() + "Z" if f.last_updated else None,
@@ -478,7 +453,51 @@ async def update_feed(id: str, payload: UpdateFeedRequest, session: AsyncSession
     )
 
 @router.delete("/feeds/{id}")
-async def delete_feed(id: str, session: AsyncSession = Depends(get_session), admin=Depends(get_current_admin)) -> dict:
+async def delete_feed(
+    id: str,
+    session: AsyncSession = Depends(get_session),
+    current: Optional[SAUser] = Depends(get_optional_user),
+) -> dict:
+    """User deletes a feed: unsubscribes from the channel linked to this feed.
+    If the feed's channel has no more subscribers, also removes the channel and feed."""
+    from ..models import Subscription as SASub, Channel as SAChannel, ChannelSource as SAChannelSource
+    from sqlalchemy import delete as sql_delete
+
+    # Find the channel source linked to this feed
+    cs = (await session.execute(
+        select(SAChannelSource).where(SAChannelSource.feed_id == id)
+    )).scalar_one_or_none()
+
+    if current and cs:
+        # Remove user's subscription to this channel
+        await session.execute(
+            sql_delete(SASub).where(
+                SASub.user_id == current.id,
+                SASub.channel_id == cs.channel_id,
+            )
+        )
+        await session.commit()
+
+        # Check if any other user still subscribes to this channel
+        remaining_subs = (await session.execute(
+            select(func.count(SASub.id)).where(SASub.channel_id == cs.channel_id)
+        )).scalar() or 0
+
+        # If no more subscribers and this is a personal (non-public) channel, clean up
+        ch = (await session.execute(
+            select(SAChannel).where(SAChannel.id == cs.channel_id)
+        )).scalar_one_or_none()
+        if remaining_subs == 0 and ch and not ch.is_public:
+            await session.execute(sql_delete(SAChannelSource).where(SAChannelSource.channel_id == cs.channel_id))
+            await session.delete(ch)
+            q = await session.execute(select(SAFeed).where(SAFeed.id == id))
+            f = q.scalar_one_or_none()
+            if f:
+                await session.delete(f)
+            await session.commit()
+        return {"message": "Unsubscribed successfully"}
+
+    # Fallback: admin hard-delete (or no user context)
     q = await session.execute(select(SAFeed).where(SAFeed.id == id))
     f = q.scalar_one_or_none()
     if not f:
@@ -490,5 +509,4 @@ async def delete_feed(id: str, session: AsyncSession = Depends(get_session), adm
 @router.post("/feeds/{id}/refresh")
 async def refresh_feed(id: str, session: AsyncSession = Depends(get_session)) -> dict:
     res = await rss_fetch(session, id)
-    return res.dict()
     return res.dict()

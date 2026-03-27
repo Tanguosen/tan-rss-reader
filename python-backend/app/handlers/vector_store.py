@@ -11,6 +11,7 @@ from pymilvus import (
     MilvusException
 )
 from app.handlers.ai import AI_CFG, _call_embedding
+from app.config import env_settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,8 @@ class VectorStore:
         if self.connected:
             return
 
-        host = AI_CFG["vector"].get("milvus_host", "localhost")
-        port = AI_CFG["vector"].get("milvus_port", "19530")
+        host = AI_CFG["vector"].get("milvus_host") or env_settings.milvus_host or "localhost"
+        port = AI_CFG["vector"].get("milvus_port") or env_settings.milvus_port or "19530"
         
         try:
             # Connect in a thread to avoid blocking

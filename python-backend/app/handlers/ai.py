@@ -11,7 +11,7 @@ import re
 from uuid import uuid4
 
 from ..db import SessionLocal
-from ..models import AIConfigRow as SAAIConfigRow, Entry as SAEntry, EntryAI as SAEntryAI, AIDailyDigest as SAAIDailyDigest, UserMembership as SAUserMembership, UserUsage as SAUserUsage
+from ..models import AIConfigRow as SAAIConfigRow, Entry as SAEntry, EntryAI as SAEntryAI, AIDailyDigest as SAAIDailyDigest, UserMembership as SAUserMembership, UserUsage as SAUserUsage, WebContentCache as SAWebContentCache
 
 from .auth import get_current_user, get_current_admin
 
@@ -100,6 +100,182 @@ class EmbeddingRequest(BaseModel):
 class ResearchRequest(BaseModel):
     query: str
     limit: int = 8
+
+
+class OriginalArticleResponse(BaseModel):
+    entry_id: str
+    title: str
+    url: Optional[str] = None
+    content: str
+    source: str
+    status: str
+    web_available: bool = False
+
+
+def _strip_html_tags(html: str) -> str:
+    text = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", html)
+    text = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", text)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</p>", "\n", text)
+    text = re.sub(r"(?i)</div>", "\n", text)
+    text = re.sub(r"(?i)</li>", "\n", text)
+    text = re.sub(r"(?i)</h[1-6]>", "\n", text)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = (
+        text.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
+    )
+    text = re.sub(r"\n\s*\n+", "\n\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip()
+
+
+def _extract_main_html_block(html: str) -> str:
+    patterns = [
+        r"(?is)<article[^>]*>(.*?)</article>",
+        r'(?is)<main[^>]*>(.*?)</main>',
+        r'(?is)<div[^>]+class="[^"]*(content|article|post|entry|story|main)[^"]*"[^>]*>(.*?)</div>',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html)
+        if match:
+            groups = [g for g in match.groups() if g]
+            if groups:
+                return groups[-1]
+    body_match = re.search(r"(?is)<body[^>]*>(.*?)</body>", html)
+    return body_match.group(1) if body_match else html
+
+
+def _extract_html_title(html: str) -> Optional[str]:
+    og_match = re.search(r'(?is)<meta[^>]+property="og:title"[^>]+content="([^"]+)"', html)
+    if og_match:
+        return og_match.group(1).strip()
+    title_match = re.search(r"(?is)<title[^>]*>(.*?)</title>", html)
+    if title_match:
+        return _strip_html_tags(title_match.group(1)).strip()
+    return None
+
+
+def _looks_truncated(text: str) -> bool:
+    normalized = text.strip().lower()
+    if len(normalized) < 900:
+        return True
+    truncation_markers = [
+        "read more",
+        "继续阅读",
+        "查看全文",
+        "全文如下",
+        "...",
+        "…",
+    ]
+    return any(marker in normalized[-120:] for marker in truncation_markers)
+
+
+async def _fetch_web_content(url: str) -> tuple[Optional[str], Optional[str], str]:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+        )
+    }
+    try:
+        async with httpx.AsyncClient(timeout=18, follow_redirects=True, headers=headers) as client:
+            resp = await client.get(url)
+        if resp.status_code >= 400:
+            return None, None, f"http_{resp.status_code}"
+        html = resp.text
+        main_html = _extract_main_html_block(html)
+        content = _strip_html_tags(main_html)
+        if len(content) < 400:
+            content = _strip_html_tags(html)
+        if len(content) < 200:
+            return None, _extract_html_title(html), "content_too_short"
+        return content[:12000], _extract_html_title(html), "ok"
+    except Exception as e:
+        return None, None, f"error:{type(e).__name__}"
+
+
+async def _get_best_entry_text(entry: SAEntry, session: AsyncSession) -> tuple[str, bool]:
+    base_text = (entry.content or entry.summary or "").strip()
+    should_try_web = bool(entry.url) and (
+        not base_text or len(base_text) < 1200 or _looks_truncated(base_text)
+    )
+    if not should_try_web:
+        return base_text[:4000], False
+
+    cache = (
+        await session.execute(
+            select(SAWebContentCache).where(SAWebContentCache.url == entry.url)
+        )
+    ).scalar_one_or_none()
+    if cache and cache.content:
+        return cache.content[:4000], True
+
+    content, title, status = await _fetch_web_content(entry.url)
+    now = datetime.utcnow()
+    if cache is None:
+        cache = SAWebContentCache(
+            url=entry.url,
+            title=title,
+            content=content,
+            status=status,
+            fetched_at=now,
+            updated_at=now,
+        )
+        session.add(cache)
+    else:
+        cache.title = title or cache.title
+        cache.content = content
+        cache.status = status
+        cache.fetched_at = now
+        cache.updated_at = now
+    await session.commit()
+
+    if content:
+        return content[:4000], True
+    return base_text[:4000], False
+
+
+async def _get_original_entry_content(entry: SAEntry, session: AsyncSession) -> tuple[str, str, str, Optional[str]]:
+    base_text = (entry.content or entry.summary or "").strip()
+    if not entry.url:
+        return base_text[:12000], "rss", "missing_url", entry.title
+
+    cache = (
+        await session.execute(
+            select(SAWebContentCache).where(SAWebContentCache.url == entry.url)
+        )
+    ).scalar_one_or_none()
+    if cache and cache.content:
+        return cache.content[:12000], "web", cache.status or "ok", cache.title or entry.title
+
+    content, title, status = await _fetch_web_content(entry.url)
+    now = datetime.utcnow()
+    if cache is None:
+        cache = SAWebContentCache(
+            url=entry.url,
+            title=title,
+            content=content,
+            status=status,
+            fetched_at=now,
+            updated_at=now,
+        )
+        session.add(cache)
+    else:
+        cache.title = title or cache.title
+        cache.content = content
+        cache.status = status
+        cache.fetched_at = now
+        cache.updated_at = now
+    await session.commit()
+
+    if content:
+        return content[:12000], "web", status, title or entry.title
+    return base_text[:12000], "rss", status, entry.title
 
 from fastapi.responses import StreamingResponse
 
@@ -961,6 +1137,8 @@ async def research(
             "key_findings": [],
             "open_questions": ["尝试更具体的关键词，或等待更多相关文章被向量化。"],
             "references": [],
+            "web_enhanced": False,
+            "web_enhanced_count": 0,
         }
 
     stmt = (
@@ -972,20 +1150,16 @@ async def research(
 
     references = []
     context_blocks = []
-    ordered_refs = []
+    web_enhanced_count = 0
     for hit in hits:
         entry_id = hit.get("entry_id")
         if not entry_id or entry_id not in entry_map:
             continue
         entry = entry_map[entry_id]
-        summary_text = (entry.summary or entry.content or "")[:700].replace("\n", " ")
-        ordered_refs.append({
-            "entry_id": entry.id,
-            "title": entry.title or "无标题",
-            "published_at": int(entry.published_at.timestamp()) if entry.published_at else 0,
-            "score": hit.get("score") or 0.0,
-            "feed_id": entry.feed_id,
-        })
+        best_text, web_enhanced = await _get_best_entry_text(entry, session)
+        if web_enhanced:
+            web_enhanced_count += 1
+        summary_text = best_text[:900].replace("\n", " ")
         references.append({
             "id": entry.id,
             "entry_id": entry.id,
@@ -993,10 +1167,12 @@ async def research(
             "published_at": int(entry.published_at.timestamp()) if entry.published_at else 0,
             "score": hit.get("score") or 0.0,
             "feed_id": entry.feed_id,
+            "web_enhanced": web_enhanced,
         })
         context_blocks.append(
             f"[{len(context_blocks)+1}] 标题: {entry.title or '无标题'}\n"
             f"时间: {entry.published_at}\n"
+            f"来源URL: {entry.url or '未知'}\n"
             f"内容: {summary_text}\n"
         )
         if len(context_blocks) >= req.limit:
@@ -1055,7 +1231,37 @@ async def research(
         "key_findings": [str(item) for item in parsed.get("key_findings", []) if str(item).strip()],
         "open_questions": [str(item) for item in parsed.get("open_questions", []) if str(item).strip()],
         "references": references[:req.limit],
+        "web_enhanced": web_enhanced_count > 0,
+        "web_enhanced_count": web_enhanced_count,
     }
+
+
+@router.get("/ai/entries/{entry_id}/original", response_model=OriginalArticleResponse)
+async def get_original_article(
+    entry_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_user = Depends(get_current_user),
+) -> OriginalArticleResponse:
+    del current_user
+    entry = (
+        await session.execute(select(SAEntry).where(SAEntry.id == entry_id))
+    ).scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="entry not found")
+
+    content, source, status, title = await _get_original_entry_content(entry, session)
+    if not content.strip():
+        raise HTTPException(status_code=404, detail="original content unavailable")
+
+    return OriginalArticleResponse(
+        entry_id=entry.id,
+        title=(title or entry.title or "原文阅读").strip(),
+        url=entry.url,
+        content=content.strip(),
+        source=source,
+        status=status,
+        web_available=source == "web",
+    )
 
 class SynthesisRequest(BaseModel):
     entry_ids: List[str]
@@ -1307,6 +1513,49 @@ async def get_today_digest(
 
 class DeepDiveRequest(BaseModel):
     entry_id: str
+    language: Optional[str] = None
+
+
+def _build_deep_dive_template(language: str) -> dict:
+    if language == "zh":
+        return {
+            "target_language": "Simplified Chinese",
+            "format_instruction": "请使用简体中文输出全文，使用自然、专业的中文小标题和要点，不要混用英文标题。",
+            "heading_core": "核心洞察",
+            "heading_analysis": "深度解析",
+            "heading_takeaway": "一句话总结",
+            "core_example_1": "[洞察1]",
+            "core_example_2": "[洞察2]",
+            "analysis_hint": "[分析文章的背景、行业影响、潜在关联与后续值得关注的变化。]",
+            "takeaway_hint": "[一句话总结核心结论]",
+            "article_title_label": "文章标题",
+            "article_content_label": "文章内容",
+            "system_prompt": "You are a professional analyst providing deep dives on tech, news, and various topics. Always respond in Simplified Chinese and use natural Chinese section headings.",
+        }
+
+    language_names = {
+        "en": "English",
+        "ja": "Japanese",
+        "ko": "Korean",
+        "fr": "French",
+        "de": "German",
+        "es": "Spanish",
+    }
+    target_language = language_names.get(language, language or "English")
+    return {
+        "target_language": target_language,
+        "format_instruction": f"Write the entire response in {target_language}. Use clear, natural section headings in {target_language}.",
+        "heading_core": "Core Insights",
+        "heading_analysis": "Analysis and Context",
+        "heading_takeaway": "One-Sentence Takeaway",
+        "core_example_1": "[Insight 1]",
+        "core_example_2": "[Insight 2]",
+        "analysis_hint": "[Analyze the article's background, broader implications, industry impact, and notable connections.]",
+        "takeaway_hint": "[A sharp single-sentence conclusion]",
+        "article_title_label": "Article Title",
+        "article_content_label": "Article Content",
+        "system_prompt": f"You are a professional analyst providing deep dives on tech, news, and various topics. Always respond in {target_language}.",
+    }
 
 @router.post("/ai/deep-dive")
 async def generate_deep_dive(
@@ -1314,33 +1563,40 @@ async def generate_deep_dive(
     session: AsyncSession = Depends(get_session),
     current_user = Depends(get_current_user)
 ):
+    config = await get_user_ai_context(current_user.id, session)
     stmt = select(SAEntry).where(SAEntry.id == req.entry_id)
     result = await session.execute(stmt)
     entry = result.scalar_one_or_none()
     
     if not entry:
         raise HTTPException(status_code=404, detail="Entry not found")
-        
+
+    language = (req.language or config["features"].get("translation_language") or "zh").strip().lower()
+    template = _build_deep_dive_template(language)
+    target_language = template["target_language"]
+
     content = entry.content or entry.summary or ""
     content = content[:10000] # Provide more content for deep dive
     
     prompt = (
-        "You are an expert analyst. Provide a deep dive analysis of the following article.\n\n"
+        f"You are an expert analyst. Provide a deep dive analysis of the following article in {target_language}.\n"
+        f"{template['format_instruction']}\n"
+        "Keep the structure clear, concise, and use Markdown headings and bullet points.\n\n"
         "## Output Format (Markdown):\n"
-        "## 🔍 核心洞察 (Core Insights)\n"
-        "- [洞察1]\n"
-        "- [洞察2]\n\n"
-        "## 🧠 深度解析 (Analysis & Context)\n"
-        "[详细分析文章的背景、行业影响、潜在关联等]\n\n"
-        "## 📌 一句话总结 (Takeaway)\n"
-        "[一句话精辟总结]\n\n"
-        "Article Title: " + (entry.title or "Untitled") + "\n\n"
-        "Article Content:\n" + content
+        f"## {template['heading_core']}\n"
+        f"- {template['core_example_1']}\n"
+        f"- {template['core_example_2']}\n\n"
+        f"## {template['heading_analysis']}\n"
+        f"{template['analysis_hint']}\n\n"
+        f"## {template['heading_takeaway']}\n"
+        f"{template['takeaway_hint']}\n\n"
+        f"{template['article_title_label']}: " + (entry.title or "Untitled") + "\n\n"
+        f"{template['article_content_label']}:\n" + content
     )
     
     async def event_generator():
         async for chunk in _call_ai_stream([
-            {"role": "system", "content": "You are a professional analyst providing deep dives on tech, news, and various topics."},
+            {"role": "system", "content": template["system_prompt"]},
             {"role": "user", "content": prompt},
         ], max_tokens=1500):
             yield chunk

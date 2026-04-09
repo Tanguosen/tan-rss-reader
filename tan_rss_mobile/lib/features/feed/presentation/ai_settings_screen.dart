@@ -77,6 +77,25 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
       _prompts = results[1] as List<Map<String, dynamic>>;
       _membership = results[2] as Map<String, dynamic>;
 
+      final tier = _membership?['tier']?.toString().toLowerCase();
+      final isPaidTier = tier == 'plus' || tier == 'pro';
+      if (isPaidTier &&
+          (!_config!.features.autoTranslation ||
+              !_config!.features.autoTitleTranslation)) {
+        _config = AIConfig(
+          summary: _config!.summary,
+          translation: _config!.translation,
+          embedding: _config!.embedding,
+          features: AIFeatureConfig(
+            autoSummary: _config!.features.autoSummary,
+            autoTranslation: true,
+            autoTitleTranslation: true,
+            autoQualityScoring: _config!.features.autoQualityScoring,
+            translationLanguage: _config!.features.translationLanguage,
+          ),
+        );
+      }
+
       _apiKeyController.text = _config!.summary.apiKey;
       _baseUrlController.text = _config!.summary.baseUrl;
       _modelNameController.text = _config!.summary.modelName;
@@ -252,23 +271,6 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
         _buildEmbeddingConfigInputs(),
         const SizedBox(height: 32),
 
-        _buildPromptsSection(
-          'AI指令管理',
-          'summary',
-          'AI Summary',
-          'Based on the following...',
-        ),
-        const SizedBox(height: 24),
-
-        _buildPromptsSection(
-          '文章聚合提示词',
-          'synthesis',
-          'Article Aggregation',
-          'Please generate a compreh...',
-        ),
-        const SizedBox(height: 24),
-
-        _buildTipsCard(),
         const SizedBox(height: 48),
 
         Text(
@@ -764,229 +766,5 @@ class _AISettingsScreenState extends ConsumerState<AISettingsScreen> {
           context,
         ).showSnackBar(SnackBar(content: Text('删除失败: $e')));
     }
-  }
-
-  Widget _buildPromptsSection(
-    String title,
-    String type,
-    String defaultName,
-    String defaultDesc,
-  ) {
-    final typePrompts = _prompts
-        .where((p) => p['prompt_type'] == type)
-        .toList();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              title,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => _showPromptDialog(defaultType: type),
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('添加'),
-              style: OutlinedButton.styleFrom(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-
-        // Default Prompt Card
-        Card(
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: Colors.grey.shade200),
-          ),
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 8,
-            ),
-            leading: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.drag_indicator, color: Colors.grey.shade400),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade100,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.star,
-                    color: Colors.orange.shade700,
-                    size: 20,
-                  ),
-                ),
-              ],
-            ),
-            title: Row(
-              children: [
-                Text(
-                  defaultName,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Text(
-                    '默认',
-                    style: TextStyle(fontSize: 10, color: Colors.grey),
-                  ),
-                ),
-              ],
-            ),
-            subtitle: Text(
-              defaultDesc,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            trailing: IconButton(
-              icon: const Icon(Icons.more_vert),
-              onPressed: () {},
-            ),
-          ),
-        ),
-
-        // Custom Prompts List
-        ...typePrompts
-            .map(
-              (p) => Card(
-                elevation: 0,
-                margin: const EdgeInsets.only(top: 8),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(color: Colors.grey.shade200),
-                ),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  leading: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.drag_indicator, color: Colors.grey.shade400),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.article_outlined,
-                          color: Colors.grey.shade700,
-                          size: 20,
-                        ),
-                      ),
-                    ],
-                  ),
-                  title: Text(
-                    p['name'] ?? '',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: Text(
-                    p['content'] ?? '',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: PopupMenuButton<String>(
-                    onSelected: (value) {
-                      if (value == 'edit') {
-                        _showPromptDialog(prompt: p, defaultType: type);
-                      } else if (value == 'delete') {
-                        _deletePrompt(p['id']);
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      const PopupMenuItem(value: 'edit', child: Text('编辑')),
-                      const PopupMenuItem(
-                        value: 'delete',
-                        child: Text('删除', style: TextStyle(color: Colors.red)),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            )
-            .toList(),
-      ],
-    );
-  }
-
-  Widget _buildTipsCard() {
-    return Card(
-      elevation: 0,
-      color: Theme.of(
-        context,
-      ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.lightbulb, color: Colors.orange),
-                const SizedBox(width: 8),
-                Text(
-                  '提示',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildTipItem('使用 {title} 和 {content} 占位符来引用文章信息'),
-            _buildTipItem('使用 {language} 占位符来引用AI生成语言（可在语言设置中配置）'),
-            _buildTipItem('API密钥安全存储在您的本地设备上'),
-            _buildTipItem('您可以配置自定义模型和端点以供高级使用'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTipItem(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '• ',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-          Expanded(child: Text(text, style: const TextStyle(height: 1.4))),
-        ],
-      ),
-    );
   }
 }

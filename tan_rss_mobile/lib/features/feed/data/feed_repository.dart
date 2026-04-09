@@ -28,7 +28,7 @@ class EntryQuery {
     this.highQualityOnly = false,
     this.limit = 100,
     this.offset = 0,
-    this.orderBy = 'created_at',
+    this.orderBy = 'published_at',
     this.order = 'desc',
     this.searchText = '',
     this.dateRange = 'all',
@@ -38,6 +38,7 @@ class EntryQuery {
 class FeedRepository {
   final ApiClient _apiClient;
   final LocalCacheDb _cache = LocalCacheDb();
+  final Map<String, Future<String>> _inflightTextTranslations = {};
 
   FeedRepository(this._apiClient);
 
@@ -96,6 +97,57 @@ class FeedRepository {
     }
   }
 
+  Future<List<Feed>> getAdminFeeds() async {
+    try {
+      final response = await _apiClient.dio.get('/admin/feeds');
+      return (response.data as List)
+          .map((e) => Feed.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw Exception('加载平台订阅源失败：${e.message}');
+    }
+  }
+
+  Future<Feed> createAdminFeed({
+    required String url,
+    String? title,
+    int? updateInterval,
+  }) async {
+    try {
+      final response = await _apiClient.dio.post(
+        '/admin/feeds',
+        data: {'url': url, 'title': title, 'update_interval': updateInterval},
+      );
+      return Feed.fromJson(response.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw Exception('创建平台订阅源失败：${e.message}');
+    }
+  }
+
+  Future<Feed> updateAdminFeed({
+    required String id,
+    String? title,
+    int? updateInterval,
+  }) async {
+    try {
+      final response = await _apiClient.dio.patch(
+        '/admin/feeds/$id',
+        data: {'title': title, 'update_interval': updateInterval},
+      );
+      return Feed.fromJson(response.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw Exception('更新平台订阅源失败：${e.message}');
+    }
+  }
+
+  Future<void> deleteAdminFeed(String id) async {
+    try {
+      await _apiClient.dio.delete('/admin/feeds/$id');
+    } on DioException catch (e) {
+      throw Exception('删除平台订阅源失败：${e.message}');
+    }
+  }
+
   // Phase 3/Channel management: fetch channel's feeds
   Future<List<Feed>> getChannelFeeds(String channelId) async {
     try {
@@ -147,13 +199,23 @@ class FeedRepository {
   Future<List<Entry>> getEntriesByQuery(EntryQuery query) async {
     final token = await _apiClient.getAuthToken();
     final isLoggedIn = token != null && token.isNotEmpty;
+    final normalizedTimeField = query.orderBy == 'inserted_at'
+        ? 'inserted_at'
+        : 'published_at';
+    final normalizedOrderBy = normalizedTimeField == 'published_at'
+        ? 'published_at'
+        : 'created_at';
     try {
       final params = <String, dynamic>{
         'limit': query.limit,
         'offset': query.offset,
-        'order_by': query.orderBy,
+        'time_field': normalizedTimeField,
+        'order_by': normalizedOrderBy,
         'order': query.order,
       };
+      if (query.dateRange.isNotEmpty && query.dateRange != 'all') {
+        params['date_range'] = query.dateRange;
+      }
       if (query.feedId != null && query.feedId!.isNotEmpty) {
         params['feed_id'] = query.feedId;
       }
@@ -195,7 +257,7 @@ class FeedRepository {
         limit: query.limit,
         offset: query.offset,
         searchText: query.searchText,
-        orderBy: query.orderBy,
+        orderBy: normalizedTimeField,
         order: query.order,
       );
       if (cachedItems.isNotEmpty) {
@@ -208,9 +270,13 @@ class FeedRepository {
   Future<Entry> getEntry(String id) async {
     try {
       final response = await _apiClient.dio.get('/entries/$id');
-      return Entry.fromJson(response.data as Map<String, dynamic>);
-    } on DioException catch (e) {
-      throw Exception('加载文章失败：${e.message}');
+      final entry = Entry.fromJson(response.data as Map<String, dynamic>);
+      await _cache.cacheEntries([entry]);
+      return entry;
+    } on DioException {
+      final cached = await _cache.readEntry(id);
+      if (cached != null) return cached;
+      rethrow;
     }
   }
 
@@ -377,11 +443,15 @@ class FeedRepository {
   Future<List<Channel>> getSquareChannels() async {
     try {
       final response = await _apiClient.dio.get('/channels/square');
-      return (response.data as List)
+      final channels = (response.data as List)
           .map((e) => Channel.fromJson(e as Map<String, dynamic>))
           .toList();
-    } on DioException catch (e) {
-      throw Exception('加载频道广场失败：${e.message}');
+      await _cache.cacheChannels(channels, scope: 'square');
+      return channels;
+    } on DioException {
+      final cached = await _cache.readChannels(scope: 'square');
+      if (cached.isNotEmpty) return cached;
+      rethrow;
     }
   }
 
@@ -390,6 +460,7 @@ class FeedRepository {
     String? description,
     bool isPublic = true,
     String? iconUrl,
+    String? ownerId,
   }) async {
     try {
       final data = {
@@ -398,6 +469,7 @@ class FeedRepository {
         'is_public': isPublic,
       };
       if (iconUrl != null) data['icon_url'] = iconUrl;
+      if (ownerId != null) data['owner_id'] = ownerId;
       final response = await _apiClient.dio.post('/admin/channels', data: data);
       return Channel.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (e) {
@@ -478,6 +550,30 @@ class FeedRepository {
       await _apiClient.dio.delete('/admin/channels/$channelId/sources/$feedId');
     } on DioException catch (e) {
       throw Exception('移除频道数据源失败：${e.message}');
+    }
+  }
+
+  Future<ChannelSourceItem> updateChannelSource({
+    required String channelId,
+    required String feedId,
+    String? title,
+    int? updateInterval,
+    int? orderIndex,
+    int? weight,
+  }) async {
+    try {
+      final response = await _apiClient.dio.patch(
+        '/admin/channels/$channelId/sources/$feedId',
+        data: {
+          'title': title,
+          'update_interval': updateInterval,
+          'order_index': orderIndex,
+          'weight': weight,
+        },
+      );
+      return ChannelSourceItem.fromJson(response.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw Exception('更新频道数据源失败：${e.message}');
     }
   }
 
@@ -606,9 +702,19 @@ class FeedRepository {
         '/entries/starred',
         queryParameters: {'limit': limit, 'offset': offset},
       );
-      return (response.data as List).map((e) => Entry.fromJson(e)).toList();
-    } on DioException catch (e) {
-      throw Exception('加载收藏文章失败：${e.message}');
+      final items = (response.data as List)
+          .map((e) => Entry.fromJson(e))
+          .toList();
+      await _cache.cacheEntries(items);
+      return items;
+    } on DioException {
+      final cached = await _cache.readEntries(
+        starredOnly: true,
+        limit: limit,
+        offset: offset,
+      );
+      if (cached.isNotEmpty) return cached;
+      rethrow;
     }
   }
 
@@ -750,26 +856,141 @@ class FeedRepository {
     required String text,
     String language = 'zh',
   }) async {
+    final normalizedText = text.trim();
+    if (normalizedText.isEmpty) {
+      return text;
+    }
+    final cached = await _cache.readTranslatedText(
+      sourceText: normalizedText,
+      language: language,
+    );
+    if (cached != null) {
+      return cached;
+    }
+
+    final requestKey = '$language::$normalizedText';
+    final inflight = _inflightTextTranslations[requestKey];
+    if (inflight != null) {
+      return inflight;
+    }
+
+    final future = _translateAndCacheText(
+      sourceText: normalizedText,
+      language: language,
+      fallbackText: text,
+    );
+    _inflightTextTranslations[requestKey] = future;
+    try {
+      return await future;
+    } finally {
+      _inflightTextTranslations.remove(requestKey);
+    }
+  }
+
+  Future<String> _translateAndCacheText({
+    required String sourceText,
+    required String language,
+    required String fallbackText,
+  }) async {
     try {
       final response = await _apiClient.dio.post(
         '/ai/translate-text',
-        data: {'text': text, 'target_language': language},
+        data: {'text': sourceText, 'target_language': language},
       );
       final data = response.data as Map<String, dynamic>;
-      return (data['translated'] ?? text) as String;
+      final translated = (data['translated'] ?? sourceText) as String;
+      if (translated.isNotEmpty) {
+        await _cache.cacheTranslatedText(
+          sourceText: sourceText,
+          language: language,
+          translatedText: translated,
+        );
+      }
+      return translated;
     } on DioException {
-      return text; // 翻译失败时返回原文
+      return fallbackText; // 翻译失败时返回原文
     }
+  }
+
+  Future<String> translateLongText({
+    required String text,
+    String language = 'zh',
+    int maxChunkLength = 1800,
+  }) async {
+    final normalizedText = text.trim();
+    if (normalizedText.isEmpty) {
+      return text;
+    }
+    if (normalizedText.length <= maxChunkLength) {
+      return translateText(text: normalizedText, language: language);
+    }
+
+    final chunks = <String>[];
+    final buffer = StringBuffer();
+    final paragraphs = normalizedText.split(RegExp(r'\n{2,}'));
+
+    void flushBuffer() {
+      final chunk = buffer.toString().trim();
+      if (chunk.isNotEmpty) {
+        chunks.add(chunk);
+      }
+      buffer.clear();
+    }
+
+    for (final paragraph in paragraphs) {
+      final candidate = paragraph.trim();
+      if (candidate.isEmpty) {
+        continue;
+      }
+      if (candidate.length > maxChunkLength) {
+        if (buffer.isNotEmpty) {
+          flushBuffer();
+        }
+        for (var i = 0; i < candidate.length; i += maxChunkLength) {
+          final end = (i + maxChunkLength).clamp(0, candidate.length);
+          chunks.add(candidate.substring(i, end));
+        }
+        continue;
+      }
+      final pending = buffer.isEmpty
+          ? candidate
+          : '${buffer.toString().trim()}\n\n$candidate';
+      if (pending.length > maxChunkLength && buffer.isNotEmpty) {
+        flushBuffer();
+        buffer.write(candidate);
+      } else {
+        if (buffer.isNotEmpty) {
+          buffer.write('\n\n');
+        }
+        buffer.write(candidate);
+      }
+    }
+
+    if (buffer.isNotEmpty) {
+      flushBuffer();
+    }
+
+    final translatedChunks = <String>[];
+    for (final chunk in chunks) {
+      translatedChunks.add(
+        await translateText(text: chunk, language: language),
+      );
+    }
+    return translatedChunks.join('\n\n');
   }
 
   Future<List<Channel>> getMySubscriptions() async {
     try {
       final response = await _apiClient.dio.get('/me/subscriptions');
-      return (response.data as List)
+      final channels = (response.data as List)
           .map((e) => Channel.fromJson(e as Map<String, dynamic>))
           .toList();
-    } on DioException catch (e) {
-      throw Exception('加载订阅列表失败：${e.message}');
+      await _cache.cacheChannels(channels, scope: 'my_subscriptions');
+      return channels;
+    } on DioException {
+      final cached = await _cache.readChannels(scope: 'my_subscriptions');
+      if (cached.isNotEmpty) return cached;
+      rethrow;
     }
   }
 
@@ -861,25 +1082,42 @@ class FeedRepository {
     String? dateRange,
     String? timeField,
   }) async {
+    final normalizedTimeField = timeField == 'inserted_at'
+        ? 'inserted_at'
+        : 'published_at';
     try {
       final params = <String, dynamic>{
         'limit': limit,
         'offset': offset,
-        'order_by': timeField == 'published_at' ? 'published_at' : 'created_at',
+        'time_field': normalizedTimeField,
+        'order_by': normalizedTimeField == 'published_at'
+            ? 'published_at'
+            : 'created_at',
         'order': 'desc',
       };
       if (unreadOnly == true) params['unread_only'] = true;
-      if (dateRange != null && dateRange != 'all')
+      if (dateRange != null && dateRange != 'all') {
         params['date_range'] = dateRange;
+      }
       final response = await _apiClient.dio.get(
         '/channels/$channelId/entries',
         queryParameters: params,
       );
-      return (response.data as List)
+      final items = (response.data as List)
           .map((e) => Entry.fromJson(e as Map<String, dynamic>))
           .toList();
-    } on DioException catch (e) {
-      throw Exception('加载频道文章失败：${e.message}');
+      await _cache.cacheChannelEntries(channelId, items);
+      return items;
+    } on DioException {
+      final cached = await _cache.readChannelEntries(
+        channelId,
+        unreadOnly: unreadOnly == true,
+        limit: limit,
+        offset: offset,
+        orderBy: normalizedTimeField,
+      );
+      if (cached.isNotEmpty) return cached;
+      rethrow;
     }
   }
 
@@ -939,6 +1177,21 @@ class FeedRepository {
       return ResearchResult.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw Exception('研究失败：${e.message}');
+    }
+  }
+
+  Future<OriginalArticle> getOriginalArticle(String entryId) async {
+    try {
+      final response = await _apiClient.dio.get(
+        '/ai/entries/$entryId/original',
+      );
+      return OriginalArticle.fromJson(response.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      final detail = e.response?.data;
+      if (detail is Map<String, dynamic> && detail['detail'] != null) {
+        throw Exception('加载原文失败：${detail['detail']}');
+      }
+      throw Exception('加载原文失败：${e.message}');
     }
   }
 
@@ -1055,11 +1308,17 @@ class FeedRepository {
     }
   }
 
-  Stream<String> generateDeepDiveStream(String entryId) async* {
+  Stream<String> generateDeepDiveStream(
+    String entryId, {
+    String? language,
+  }) async* {
     try {
       final response = await _apiClient.dio.post(
         '/ai/deep-dive',
-        data: {'entry_id': entryId},
+        data: {
+          'entry_id': entryId,
+          if (language != null && language.isNotEmpty) 'language': language,
+        },
         options: Options(responseType: ResponseType.stream),
       );
 

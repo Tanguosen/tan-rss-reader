@@ -17,11 +17,26 @@ __pycache__/
 .pnpm-store/
 node_modules/
 
-dist/
-dist-electron/
-out/
-build/
-release/
+# Build outputs (根目录)
+/dist/
+/dist-electron/
+/out/
+/build/
+/release/
 
+# tan_rss_mobile 构建文件
+tan_rss_mobile/build/
+tan_rss_mobile/.dart_tool/
+tan_rss_mobile/.flutter-plugins-dependencies
+tan_rss_mobile/.idea/
+tan_rss_mobile/.npm/
+tan_rss_mobile/android/.gradle/
+tan_rss_mobile/android/build/
+tan_rss_mobile/ios/Flutter/ephemeral/
+tan_rss_mobile/linux/flutter/ephemeral/
+tan_rss_mobile/macos/Flutter/ephemeral/
+tan_rss_mobile/windows/flutter/ephemeral/
+
+# 日志和数据库
 *.log
 *.db

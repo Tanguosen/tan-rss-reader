@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from ..db import SessionLocal
-from ..models import UserMembership as SAUserMembership, UserUsage as SAUserUsage
+from ..models import UserMembership as SAUserMembership, UserUsage as SAUserUsage, AIConfigRow as SAAIConfigRow
 from .auth import get_current_user
 
 router = APIRouter()
@@ -25,6 +25,42 @@ class SubscribeRequest(BaseModel):
     tier: str
     months: int = 1
 
+
+async def _ensure_paid_translation_features(
+    session: AsyncSession,
+    user_id: str,
+    tier: str,
+    is_active: bool,
+) -> None:
+    if tier not in ("plus", "pro") or not is_active:
+        return
+
+    row = (
+        await session.execute(select(SAAIConfigRow).where(SAAIConfigRow.id == user_id))
+    ).scalar_one_or_none()
+    now = datetime.utcnow()
+    if row is None:
+        row = SAAIConfigRow(
+            id=user_id,
+            auto_translation=True,
+            auto_title_translation=True,
+            translation_language="zh",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(row)
+        return
+
+    changed = False
+    if not bool(row.auto_translation):
+        row.auto_translation = True
+        changed = True
+    if not bool(row.auto_title_translation):
+        row.auto_title_translation = True
+        changed = True
+    if changed:
+        row.updated_at = now
+
 @router.get("/membership/status", response_model=MembershipStatus)
 async def get_membership_status(
     session: AsyncSession = Depends(get_session),
@@ -42,6 +78,9 @@ async def get_membership_status(
             is_active = True
         else:
             tier = "free" # expired
+
+    await _ensure_paid_translation_features(session, current_user.id, tier, is_active)
+    await session.commit()
     
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
     usage_id = f"{current_user.id}_{today_str}"
@@ -103,6 +142,8 @@ async def subscribe_membership(
             mem.expires_at = now + extra_time
         mem.updated_at = now
         
+    await session.commit()
+    await _ensure_paid_translation_features(session, current_user.id, req.tier, True)
     await session.commit()
     
     return {

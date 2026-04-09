@@ -1,11 +1,11 @@
 {
-    "name": "tan_rss_mobile",
-    "short_name": "tan_rss_mobile",
+    "name": "TAN RSS",
+    "short_name": "TAN RSS",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "TAN RSS · Trend · Awareness · Network. 一个现代化的 AI RSS 阅读与研究平台。",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

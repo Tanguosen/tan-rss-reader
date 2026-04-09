@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/feed_repository.dart';
+import 'feed_providers.dart';
 
 class MembershipScreen extends ConsumerStatefulWidget {
   const MembershipScreen({super.key});
@@ -41,6 +42,7 @@ class _MembershipScreenState extends ConsumerState<MembershipScreen> {
       final repository = ref.read(feedRepositoryProvider);
       await repository.subscribeMembership(tier);
       await _loadStatus();
+      ref.invalidate(aiConfigProvider);
       if (mounted) {
         ScaffoldMessenger.of(
           context,

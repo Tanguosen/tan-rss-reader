@@ -21,8 +21,9 @@ class _FeedListScreenState extends ConsumerState<FeedListScreen> {
   final ScrollController _scrollController = ScrollController();
   List<Entry> _items = [];
   final Set<String> _selectedIds = {};
+  ProviderSubscription<String?>? _selectedFeedIdSubscription;
   String? _feedId;
-  final String _orderBy = 'created_at';
+  final String _orderBy = 'published_at';
   final String _order = 'desc';
   final String _searchText = '';
   bool _isInitialLoading = true;
@@ -40,16 +41,20 @@ class _FeedListScreenState extends ConsumerState<FeedListScreen> {
     _scrollController.addListener(_onScroll);
     _reload();
     // Listen for changes in selectedFeedId to reload deterministically
-    ref.listen<String?>(selectedFeedIdProvider, (prev, next) {
-      if (prev != next) {
-        _feedId = next;
-        Future.microtask(_reload);
-      }
-    });
+    _selectedFeedIdSubscription = ref.listenManual<String?>(
+      selectedFeedIdProvider,
+      (prev, next) {
+        if (prev != next) {
+          _feedId = next;
+          Future.microtask(_reload);
+        }
+      },
+    );
   }
 
   @override
   void dispose() {
+    _selectedFeedIdSubscription?.close();
     _scrollController.dispose();
     super.dispose();
   }

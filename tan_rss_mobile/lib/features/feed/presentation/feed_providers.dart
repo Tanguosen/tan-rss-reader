@@ -218,6 +218,7 @@ final entriesProvider = FutureProvider<List<Entry>>((ref) async {
     unreadOnly: unreadOnly,
     highQualityOnly: highQualityOnly,
     starredOnly: starredOnly,
+    orderBy: 'published_at',
     limit: settings.pageSize,
   );
   return repository.getEntriesByQuery(query);
@@ -300,7 +301,11 @@ final channelEntriesProvider = FutureProvider.family<List<Entry>, String>((
 ) async {
   final repository = ref.watch(feedRepositoryProvider);
   final settings = ref.watch(interactionSettingsProvider);
-  return repository.getChannelEntries(channelId, limit: settings.pageSize);
+  return repository.getChannelEntries(
+    channelId,
+    limit: settings.pageSize,
+    timeField: 'published_at',
+  );
 });
 
 /// Returns the unread entry count for a specific channel.
@@ -313,6 +318,7 @@ final channelUnreadCountProvider = FutureProvider.family<int, String>((
     channelId,
     limit: 500,
     unreadOnly: true,
+    timeField: 'published_at',
   );
   return entries.length;
 });

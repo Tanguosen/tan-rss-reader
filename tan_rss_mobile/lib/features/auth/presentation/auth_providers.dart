@@ -18,11 +18,11 @@ class AuthState {
   });
 
   const AuthState.initial()
-      : isInitializing = true,
-        isLoggedIn = false,
-        loading = false,
-        user = null,
-        error = null;
+    : isInitializing = true,
+      isLoggedIn = false,
+      loading = false,
+      user = null,
+      error = null;
 
   bool get isAdmin => user?.role == 'admin';
 
@@ -51,7 +51,7 @@ class AuthNotifier extends Notifier<AuthState> {
   Future<void> restore() async {
     final repository = ref.read(authRepositoryProvider);
     final hasToken = await repository.isLoggedIn();
-    
+
     if (!hasToken) {
       // 没有 Token，直接关闭初始化状态，瞬间显示登录页
       state = state.copyWith(isInitializing: false, isLoggedIn: false);
@@ -59,7 +59,12 @@ class AuthNotifier extends Notifier<AuthState> {
     }
 
     // 乐观登录：只要本地有 Token，立刻放行进入主页（解除白屏/加载圈阻塞）
-    state = state.copyWith(isInitializing: false, isLoggedIn: true);
+    final cachedUser = await repository.getCachedUser();
+    state = state.copyWith(
+      isInitializing: false,
+      isLoggedIn: true,
+      user: cachedUser,
+    );
 
     // 后台静默刷新用户信息
     try {
@@ -85,10 +90,7 @@ class AuthNotifier extends Notifier<AuthState> {
         error: null,
       );
     } catch (e) {
-      state = state.copyWith(
-        loading: false,
-        error: e.toString(),
-      );
+      state = state.copyWith(loading: false, error: e.toString());
     }
   }
 
@@ -96,7 +98,11 @@ class AuthNotifier extends Notifier<AuthState> {
     final repository = ref.read(authRepositoryProvider);
     state = state.copyWith(loading: true, clearError: true);
     try {
-      await repository.register(username: username, password: password, email: email);
+      await repository.register(
+        username: username,
+        password: password,
+        email: email,
+      );
       await repository.login(username: username, password: password);
       final me = await repository.me();
       state = state.copyWith(
@@ -107,10 +113,7 @@ class AuthNotifier extends Notifier<AuthState> {
         error: null,
       );
     } catch (e) {
-      state = state.copyWith(
-        loading: false,
-        error: e.toString(),
-      );
+      state = state.copyWith(loading: false, error: e.toString());
     }
   }
 
@@ -131,20 +134,17 @@ class AuthNotifier extends Notifier<AuthState> {
     state = state.copyWith(loading: true, clearError: true);
     try {
       final updated = await repository.updateMe(email: newEmail);
-      state = state.copyWith(
-        user: updated,
-        loading: false,
-      );
+      state = state.copyWith(user: updated, loading: false);
     } catch (e) {
-      state = state.copyWith(
-        loading: false,
-        error: e.toString(),
-      );
+      state = state.copyWith(loading: false, error: e.toString());
       rethrow;
     }
   }
 
-  Future<void> updatePassword(String currentPassword, String newPassword) async {
+  Future<void> updatePassword(
+    String currentPassword,
+    String newPassword,
+  ) async {
     final repository = ref.read(authRepositoryProvider);
     state = state.copyWith(loading: true, clearError: true);
     try {
@@ -152,18 +152,14 @@ class AuthNotifier extends Notifier<AuthState> {
         currentPassword: currentPassword,
         newPassword: newPassword,
       );
-      state = state.copyWith(
-        user: updated,
-        loading: false,
-      );
+      state = state.copyWith(user: updated, loading: false);
     } catch (e) {
-      state = state.copyWith(
-        loading: false,
-        error: e.toString(),
-      );
+      state = state.copyWith(loading: false, error: e.toString());
       rethrow;
     }
   }
 }
 
-final authProvider = NotifierProvider<AuthNotifier, AuthState>(AuthNotifier.new);
+final authProvider = NotifierProvider<AuthNotifier, AuthState>(
+  AuthNotifier.new,
+);

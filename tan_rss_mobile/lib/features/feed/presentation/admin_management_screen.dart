@@ -44,7 +44,7 @@ class _AdminManagementScreenState extends ConsumerState<AdminManagementScreen>
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
-          widget.isPlatformAdmin ? '平台管理中心' : '我的频道',
+          widget.isPlatformAdmin ? '平台管理中心' : '内容管理',
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         bottom: TabBar(
@@ -52,9 +52,15 @@ class _AdminManagementScreenState extends ConsumerState<AdminManagementScreen>
           labelColor: const Color(0xFF8B6B4A),
           unselectedLabelColor: Colors.grey,
           indicatorColor: const Color(0xFF8B6B4A),
-          tabs: const [
-            Tab(text: '频道', icon: Icon(Icons.folder_outlined)),
-            Tab(text: '订阅源', icon: Icon(Icons.rss_feed_outlined)),
+          tabs: [
+            Tab(
+              text: widget.isPlatformAdmin ? '平台频道' : '我的频道',
+              icon: const Icon(Icons.folder_outlined),
+            ),
+            Tab(
+              text: widget.isPlatformAdmin ? '平台订阅源' : '我的订阅源',
+              icon: const Icon(Icons.rss_feed_outlined),
+            ),
           ],
         ),
       ),
@@ -77,24 +83,29 @@ class _ChannelsTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final channelsAsync = ref.watch(adminChannelsProvider);
-    final authState = ref.watch(authProvider);
-    final isAdmin = authState.isAdmin && isPlatformAdmin;
+    final currentUserId = ref.watch(authProvider).user?.id;
 
     return channelsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => _buildErrorView(ref, e),
       data: (channels) {
-        final publicChannels = isAdmin
-            ? channels.where((c) => c.isPublic).toList()
-            : [];
-        final personalChannels = channels.where((c) => !c.isPublic).toList();
+        final platformChannels = isPlatformAdmin
+            ? channels.where((c) => c.ownerId == null).toList()
+            : <Channel>[];
+        final personalChannels = isPlatformAdmin
+            ? <Channel>[]
+            : channels
+                  .where(
+                    (c) => currentUserId == null || c.ownerId == currentUserId,
+                  )
+                  .toList();
 
         if (channels.isEmpty ||
-            (publicChannels.isEmpty && personalChannels.isEmpty)) {
+            (platformChannels.isEmpty && personalChannels.isEmpty)) {
           return _buildEmptyView(
             icon: Icons.folder_open_outlined,
             title: '暂无频道',
-            subtitle: isAdmin ? '点击下方按钮创建第一个频道' : '暂无个人频道',
+            subtitle: isPlatformAdmin ? '点击下方按钮创建第一个平台频道' : '暂无自建频道',
             onAdd: () => _showChannelDialog(context, ref, null),
           );
         }
@@ -105,22 +116,22 @@ class _ChannelsTab extends ConsumerWidget {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  if (publicChannels.isNotEmpty) ...[
+                  if (platformChannels.isNotEmpty) ...[
                     _SectionHeader(
                       icon: Icons.public,
                       iconColor: Colors.blue,
                       title: '平台频道',
-                      count: publicChannels.length,
+                      count: platformChannels.length,
                     ),
                     const SizedBox(height: 8),
-                    ...publicChannels.map((c) => _ChannelCard(channel: c)),
-                    const SizedBox(height: 24),
+                    ...platformChannels.map((c) => _ChannelCard(channel: c)),
+                    if (personalChannels.isNotEmpty) const SizedBox(height: 24),
                   ],
                   if (personalChannels.isNotEmpty) ...[
                     _SectionHeader(
                       icon: Icons.person,
                       iconColor: Colors.purple,
-                      title: isAdmin ? '个人频道' : '我的频道',
+                      title: '我的频道',
                       count: personalChannels.length,
                     ),
                     const SizedBox(height: 8),
@@ -132,7 +143,7 @@ class _ChannelsTab extends ConsumerWidget {
             Padding(
               padding: const EdgeInsets.all(16),
               child: _AddButton(
-                label: '创建频道',
+                label: isPlatformAdmin ? '创建平台频道' : '创建频道',
                 onPressed: () => _showChannelDialog(context, ref, null),
               ),
             ),
@@ -197,7 +208,7 @@ class _ChannelsTab extends ConsumerWidget {
     final iconUrlController = TextEditingController(
       text: channel?.iconUrl ?? '',
     );
-    bool isPublic = channel?.isPublic ?? true;
+    bool isPublic = channel?.isPublic ?? isPlatformAdmin;
 
     await showDialog(
       context: context,
@@ -235,9 +246,11 @@ class _ChannelsTab extends ConsumerWidget {
                 ),
                 const SizedBox(height: 16),
                 SwitchListTile(
-                  title: const Text('公开频道'),
+                  title: Text(isPlatformAdmin ? '平台公开频道' : '公开频道'),
                   subtitle: Text(
-                    isPublic ? '其他用户可发现并订阅' : '仅自己可见',
+                    isPlatformAdmin
+                        ? '平台频道建议保持公开，供全体用户发现和订阅'
+                        : (isPublic ? '其他用户可发现并订阅' : '仅自己可见'),
                     style: TextStyle(color: Colors.grey[600], fontSize: 12),
                   ),
                   value: isPublic,
@@ -268,6 +281,7 @@ class _ChannelsTab extends ConsumerWidget {
                       iconUrl: iconUrlController.text.trim().isEmpty
                           ? null
                           : iconUrlController.text.trim(),
+                      ownerId: isPlatformAdmin ? '' : null,
                     );
                   } else {
                     await repo.updateChannel(
@@ -887,14 +901,17 @@ class _FeedsTabState extends ConsumerState<_FeedsTab> {
   Future<void> _loadFeeds() async {
     setState(() => _loading = true);
     try {
-      final feedsAsync = ref.read(feedsProvider);
-      feedsAsync.whenData((feeds) {
-        setState(() {
-          _feeds = feeds;
-          _loading = false;
-        });
+      final repo = ref.read(feedRepositoryProvider);
+      final feeds = widget.isPlatformAdmin
+          ? await repo.getAdminFeeds()
+          : await repo.getFeeds();
+      if (!mounted) return;
+      setState(() {
+        _feeds = feeds;
+        _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _loading = false);
     }
   }
@@ -938,9 +955,13 @@ class _FeedsTabState extends ConsumerState<_FeedsTab> {
     if (result != null && result.isNotEmpty) {
       try {
         final repo = ref.read(feedRepositoryProvider);
-        await repo.createFeed(url: result);
-        ref.invalidate(feedsProvider);
-        _loadFeeds();
+        if (widget.isPlatformAdmin) {
+          await repo.createAdminFeed(url: result);
+        } else {
+          await repo.createFeed(url: result);
+          ref.invalidate(feedsProvider);
+        }
+        await _loadFeeds();
         if (mounted)
           ScaffoldMessenger.of(
             context,
@@ -977,9 +998,13 @@ class _FeedsTabState extends ConsumerState<_FeedsTab> {
     if (confirmed == true) {
       try {
         final repo = ref.read(feedRepositoryProvider);
-        await repo.deleteFeed(feed.id);
-        ref.invalidate(feedsProvider);
-        _loadFeeds();
+        if (widget.isPlatformAdmin) {
+          await repo.deleteAdminFeed(feed.id);
+        } else {
+          await repo.deleteFeed(feed.id);
+          ref.invalidate(feedsProvider);
+        }
+        await _loadFeeds();
       } catch (e) {
         if (mounted)
           ScaffoldMessenger.of(
@@ -989,16 +1014,137 @@ class _FeedsTabState extends ConsumerState<_FeedsTab> {
     }
   }
 
+  Future<void> _editFeed(Feed feed) async {
+    final titleController = TextEditingController(text: feed.title ?? '');
+    int? updateInterval = feed.updateInterval;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('编辑订阅源'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  feed.url,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: titleController,
+                  decoration: const InputDecoration(
+                    labelText: '显示名称',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<int?>(
+                  initialValue: updateInterval,
+                  decoration: const InputDecoration(
+                    labelText: '更新间隔',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const [
+                    DropdownMenuItem<int?>(
+                      value: null,
+                      child: Text('默认（15分钟）'),
+                    ),
+                    DropdownMenuItem<int?>(value: 5, child: Text('5分钟')),
+                    DropdownMenuItem<int?>(value: 15, child: Text('15分钟')),
+                    DropdownMenuItem<int?>(value: 30, child: Text('30分钟')),
+                    DropdownMenuItem<int?>(value: 60, child: Text('1小时')),
+                    DropdownMenuItem<int?>(value: 1440, child: Text('24小时')),
+                  ],
+                  onChanged: (value) {
+                    setDialogState(() {
+                      updateInterval = value;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result != true) return;
+
+    try {
+      final repo = ref.read(feedRepositoryProvider);
+      if (widget.isPlatformAdmin) {
+        await repo.updateAdminFeed(
+          id: feed.id,
+          title: titleController.text.trim().isEmpty
+              ? null
+              : titleController.text.trim(),
+          updateInterval: updateInterval,
+        );
+      } else {
+        await repo.updateFeed(
+          id: feed.id,
+          title: titleController.text.trim().isEmpty
+              ? null
+              : titleController.text.trim(),
+          updateInterval: updateInterval,
+        );
+        ref.invalidate(feedsProvider);
+      }
+      await _loadFeeds();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('订阅源更新成功')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('更新失败: $e')));
+    }
+  }
+
+  String _formatUpdateInterval(int? minutes) {
+    if (minutes == null) return '默认间隔';
+    if (minutes >= 1440) return '${minutes ~/ 1440} 天';
+    if (minutes >= 60) return '${minutes ~/ 60} 小时';
+    return '$minutes 分钟';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
 
-    final displayFeeds = _feeds;
+    final currentUserId = ref.watch(authProvider).user?.id;
+    final myFeeds = widget.isPlatformAdmin
+        ? <Feed>[]
+        : _feeds.where((feed) => feed.ownerId == currentUserId).toList();
+    final platformFeeds = widget.isPlatformAdmin
+        ? _feeds.where((feed) => feed.ownerId == null).toList()
+        : _feeds
+              .where(
+                (feed) => feed.ownerId == null || feed.ownerId != currentUserId,
+              )
+              .toList();
 
     return Column(
       children: [
         Expanded(
-          child: displayFeeds.isEmpty
+          child: _feeds.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -1014,84 +1160,35 @@ class _FeedsTabState extends ConsumerState<_FeedsTab> {
                     ],
                   ),
                 )
-              : ListView.separated(
+              : ListView(
                   padding: const EdgeInsets.all(16),
-                  itemCount: displayFeeds.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final feed = displayFeeds[index];
-                    return Card(
-                      margin: EdgeInsets.zero,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(
-                          color: Colors.grey.withValues(alpha: 0.2),
-                        ),
+                  children: [
+                    if (myFeeds.isNotEmpty) ...[
+                      _SectionHeader(
+                        icon: Icons.person_outline,
+                        iconColor: const Color(0xFF8B6B4A),
+                        title: '我的订阅源',
+                        count: myFeeds.length,
                       ),
-                      child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: Colors.grey[200],
-                          child: feed.favicon != null
-                              ? CachedNetworkImage(
-                                  imageUrl: feed.favicon!,
-                                  placeholder: (_, __) =>
-                                      const Icon(Icons.rss_feed, size: 20),
-                                  errorWidget: (_, __, ___) =>
-                                      const Icon(Icons.rss_feed, size: 20),
-                                )
-                              : const Icon(Icons.rss_feed, size: 20),
-                        ),
-                        title: Text(
-                          feed.title ?? feed.url,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Text(
-                          feed.url,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 12,
-                          ),
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if ((feed.unreadCount ?? 0) > 0)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFFE8C7),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  '${feed.unreadCount}',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Color(0xFF8B6B4A),
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.delete_outline,
-                                color: Colors.red,
-                                size: 20,
-                              ),
-                              onPressed: () => _deleteFeed(feed),
-                            ),
-                          ],
-                        ),
+                      const SizedBox(height: 8),
+                      ...myFeeds.map(
+                        (feed) => _buildFeedCard(feed, canEdit: true),
                       ),
-                    );
-                  },
+                      const SizedBox(height: 20),
+                    ],
+                    if (platformFeeds.isNotEmpty) ...[
+                      _SectionHeader(
+                        icon: Icons.public,
+                        iconColor: Colors.blue,
+                        title: widget.isPlatformAdmin ? '平台订阅源' : '平台订阅源',
+                        count: platformFeeds.length,
+                      ),
+                      const SizedBox(height: 8),
+                      ...platformFeeds.map(
+                        (feed) => _buildFeedCard(feed, canEdit: false),
+                      ),
+                    ],
+                  ],
                 ),
         ),
         Padding(
@@ -1099,6 +1196,104 @@ class _FeedsTabState extends ConsumerState<_FeedsTab> {
           child: _AddButton(label: '添加订阅源', onPressed: _addFeed),
         ),
       ],
+    );
+  }
+
+  Widget _buildFeedCard(Feed feed, {required bool canEdit}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Card(
+        margin: EdgeInsets.zero,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: Colors.grey.withValues(alpha: 0.2)),
+        ),
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: Colors.grey[200],
+            child: feed.favicon != null
+                ? CachedNetworkImage(
+                    imageUrl: feed.favicon!,
+                    placeholder: (_, __) =>
+                        const Icon(Icons.rss_feed, size: 20),
+                    errorWidget: (_, __, ___) =>
+                        const Icon(Icons.rss_feed, size: 20),
+                  )
+                : const Icon(Icons.rss_feed, size: 20),
+          ),
+          title: Text(
+            feed.title ?? feed.url,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                feed.url,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                canEdit
+                    ? '我的源 · ${_formatUpdateInterval(feed.updateInterval)}'
+                    : '平台源 · 只读',
+                style: TextStyle(
+                  color: canEdit ? const Color(0xFF8B6B4A) : Colors.blueGrey,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if ((feed.unreadCount ?? 0) > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFE8C7),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${feed.unreadCount}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF8B6B4A),
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              if (canEdit)
+                IconButton(
+                  icon: const Icon(
+                    Icons.edit_outlined,
+                    color: Color(0xFF8B6B4A),
+                    size: 20,
+                  ),
+                  onPressed: () => _editFeed(feed),
+                ),
+              IconButton(
+                icon: const Icon(
+                  Icons.delete_outline,
+                  color: Colors.red,
+                  size: 20,
+                ),
+                onPressed: () => _deleteFeed(feed),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

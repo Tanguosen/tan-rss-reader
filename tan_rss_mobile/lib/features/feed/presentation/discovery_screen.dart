@@ -251,7 +251,7 @@ class _TrendsTab extends ConsumerWidget {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
           child: Row(
             children: [
               Container(
@@ -272,37 +272,59 @@ class _TrendsTab extends ConsumerWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
-              const Text(
-                '聚类范围: ',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
               const SizedBox(width: 8),
-              DropdownButton<int>(
-                value: selectedDays,
-                items: const [
-                  DropdownMenuItem(value: 1, child: Text('最近 24 小时')),
-                  DropdownMenuItem(value: 3, child: Text('最近 3 天')),
-                  DropdownMenuItem(value: 7, child: Text('最近一周')),
-                  DropdownMenuItem(value: 30, child: Text('最近 1 个月')),
-                  DropdownMenuItem(value: 90, child: Text('最近 3 个月')),
+              PopupMenuButton<int>(
+                tooltip: '聚类范围',
+                initialValue: selectedDays,
+                onSelected: onDaysChanged,
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 1, child: Text('24 小时')),
+                  PopupMenuItem(value: 3, child: Text('3 天')),
+                  PopupMenuItem(value: 7, child: Text('1 周')),
+                  PopupMenuItem(value: 30, child: Text('1 个月')),
+                  PopupMenuItem(value: 90, child: Text('3 个月')),
                 ],
-                onChanged: (value) {
-                  if (value != null) onDaysChanged(value);
-                },
-              ),
-              const Spacer(),
-              Text(
-                '不受“我的专题”影响',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  fontSize: 12,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _rangeLabel(selectedDays),
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 18,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: 4),
+              const Spacer(),
               IconButton(
                 onPressed: () =>
                     ref.invalidate(_clustersProvider(selectedDays)),
+                visualDensity: VisualDensity.compact,
+                constraints: const BoxConstraints.tightFor(
+                  width: 36,
+                  height: 36,
+                ),
+                padding: EdgeInsets.zero,
                 icon: const Icon(Icons.refresh),
               ),
             ],
@@ -331,9 +353,9 @@ class _TrendsTab extends ConsumerWidget {
                   ref.invalidate(_clustersProvider(selectedDays));
                 },
                 child: ListView.separated(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                   itemCount: clusters.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  separatorBuilder: (_, _) => const SizedBox(height: 10),
                   itemBuilder: (context, index) {
                     final cluster = clusters[index];
                     return _ClusterCard(cluster: cluster);
@@ -415,13 +437,16 @@ class _ClusterCardState extends ConsumerState<_ClusterCard> {
         text: widget.cluster.topic,
         language: aiConfig.features.translationLanguage,
       );
-      if (mounted)
+      if (mounted) {
         setState(() {
           _translatedTopic = translated;
           _translatingTopic = false;
         });
+      }
     } catch (_) {
-      if (mounted) setState(() => _translatingTopic = false);
+      if (mounted) {
+        setState(() => _translatingTopic = false);
+      }
     }
   }
 
@@ -450,7 +475,7 @@ class _ClusterCardState extends ConsumerState<_ClusterCard> {
         },
         borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 15, 16, 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -493,25 +518,26 @@ class _ClusterCardState extends ConsumerState<_ClusterCard> {
                     child: Text(
                       '${widget.cluster.size} 篇',
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
                         color: Theme.of(context).colorScheme.onPrimaryContainer,
                       ),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               ...widget.cluster.items
                   .take(3)
                   .map((item) => _ClusterItemRow(item: item)),
               if (widget.cluster.items.length > 3) ...[
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(
                   '+ ${widget.cluster.items.length - 3} 篇更多',
                   style: TextStyle(color: Colors.grey[600], fontSize: 12),
                 ),
               ],
-              const SizedBox(height: 8),
+              const SizedBox(height: 2),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
@@ -530,6 +556,13 @@ class _ClusterCardState extends ConsumerState<_ClusterCard> {
                         ),
                       );
                     },
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                    ),
                     icon: const Icon(Icons.analytics_outlined, size: 18),
                     label: const Text('智能分析'),
                   ),
@@ -575,8 +608,9 @@ class _ClusterItemRowState extends ConsumerState<_ClusterItemRow> {
     if (!_isEnglish(widget.item.title)) return;
     final aiConfigAsync = ref.read(aiConfigProvider);
     if (!aiConfigAsync.hasValue ||
-        !aiConfigAsync.value!.features.autoTitleTranslation)
+        !aiConfigAsync.value!.features.autoTitleTranslation) {
       return;
+    }
     setState(() => _translating = true);
     try {
       final repo = ref.read(feedRepositoryProvider);
@@ -585,13 +619,16 @@ class _ClusterItemRowState extends ConsumerState<_ClusterItemRow> {
         text: widget.item.title,
         language: lang,
       );
-      if (mounted)
+      if (mounted) {
         setState(() {
           _translatedTitle = translated;
           _translating = false;
         });
+      }
     } catch (_) {
-      if (mounted) setState(() => _translating = false);
+      if (mounted) {
+        setState(() => _translating = false);
+      }
     }
   }
 
@@ -603,17 +640,25 @@ class _ClusterItemRowState extends ConsumerState<_ClusterItemRow> {
       Future.microtask(_checkAutoTranslate);
     }
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.only(bottom: 6),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.article_outlined, size: 16, color: Colors.grey),
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Icon(
+              Icons.article_outlined,
+              size: 15,
+              color: Colors.grey[500],
+            ),
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               _translatedTitle ?? widget.item.title,
-              maxLines: 1,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13),
+              style: const TextStyle(fontSize: 13, height: 1.3),
             ),
           ),
           if (_translating)
@@ -688,16 +733,6 @@ class _MyTopicsTab extends ConsumerWidget {
                 onPressed: () => ref.invalidate(recommendedTopicsProvider),
                 icon: const Icon(Icons.refresh),
               ),
-              IconButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const ResearchScreen()),
-                  );
-                },
-                icon: const Icon(Icons.manage_search),
-                tooltip: '深度搜索研究',
-              ),
             ],
           ),
         ),
@@ -731,16 +766,6 @@ class _MyTopicsTab extends ConsumerWidget {
                             ).colorScheme.onSurfaceVariant,
                           ),
                         ),
-                        const SizedBox(height: 16),
-                        Text(
-                          '后续这里会扩展为“深度搜索研究”入口。',
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                            fontSize: 12,
-                          ),
-                        ),
                       ],
                     ),
                   ),
@@ -753,7 +778,7 @@ class _MyTopicsTab extends ConsumerWidget {
                 child: ListView.separated(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                   itemCount: topics.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  separatorBuilder: (_, _) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
                     final topic = topics[index];
                     return Card(
@@ -899,6 +924,23 @@ class _MyTopicsTab extends ConsumerWidget {
   }
 }
 
+String _rangeLabel(int days) {
+  switch (days) {
+    case 1:
+      return '24 小时';
+    case 3:
+      return '3 天';
+    case 7:
+      return '1 周';
+    case 30:
+      return '1 个月';
+    case 90:
+      return '3 个月';
+    default:
+      return '$days 天';
+  }
+}
+
 class _SearchTabState extends ConsumerState<_SearchTab> {
   List<SearchResult>? _results;
   String? _error;
@@ -1011,7 +1053,7 @@ class _SearchTabState extends ConsumerState<_SearchTab> {
               : ListView.separated(
                   padding: const EdgeInsets.all(16),
                   itemCount: _results!.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
                     final result = _results![index];
                     return Card(
@@ -1346,8 +1388,9 @@ class _TimelineCardState extends ConsumerState<_TimelineCard> {
     if (!_isEnglish(widget.item.title)) return;
     final aiConfigAsync = ref.read(aiConfigProvider);
     if (!aiConfigAsync.hasValue ||
-        !aiConfigAsync.value!.features.autoTitleTranslation)
+        !aiConfigAsync.value!.features.autoTitleTranslation) {
       return;
+    }
     setState(() => _translating = true);
     try {
       final repo = ref.read(feedRepositoryProvider);
@@ -1356,13 +1399,16 @@ class _TimelineCardState extends ConsumerState<_TimelineCard> {
         text: widget.item.title,
         language: lang,
       );
-      if (mounted)
+      if (mounted) {
         setState(() {
           _translatedTitle = translated;
           _translating = false;
         });
+      }
     } catch (_) {
-      if (mounted) setState(() => _translating = false);
+      if (mounted) {
+        setState(() => _translating = false);
+      }
     }
   }
 

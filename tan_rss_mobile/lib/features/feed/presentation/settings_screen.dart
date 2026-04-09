@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../auth/presentation/auth_providers.dart';
+import '../data/feed_repository.dart';
 import 'feed_providers.dart';
 import 'ai_settings_screen.dart';
 import 'language_settings_screen.dart';
@@ -11,6 +12,7 @@ import 'sync_settings_screen.dart';
 import 'admin_management_screen.dart';
 import 'user_management_screen.dart';
 import 'about_screen.dart';
+import 'changelog_screen.dart';
 import 'membership_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -21,15 +23,17 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-
   void _showComingSoon() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('即将推出')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('即将推出')));
   }
 
   @override
   Widget build(BuildContext context) {
+    final authState = ref.watch(authProvider);
+    final isAdmin = authState.user?.role == 'admin';
+    final isLoggedIn = authState.isLoggedIn;
     return Scaffold(
       appBar: AppBar(
         title: const Text('设置'),
@@ -49,12 +53,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               borderRadius: BorderRadius.circular(16),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
-                onTap: _showComingSoon,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ChangelogScreen()),
+                ),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Row(
                     children: [
-                      const Icon(Icons.new_releases_outlined, color: Color(0xFF6D4C41)),
+                      const Icon(
+                        Icons.new_releases_outlined,
+                        color: Color(0xFF6D4C41),
+                      ),
                       const SizedBox(width: 16),
                       Expanded(
                         child: Column(
@@ -62,16 +71,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           children: [
                             Text(
                               '更新日志',
-                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(
                                     fontWeight: FontWeight.bold,
                                     color: const Color(0xFF3E2F25),
                                   ),
                             ),
                             Text(
                               '查看最新版本的改进内容',
-                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: const Color(0xFF6D4C41),
-                                  ),
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(color: const Color(0xFF6D4C41)),
                             ),
                           ],
                         ),
@@ -89,9 +98,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             icon: Icons.workspace_premium_outlined,
             title: '会员中心',
             subtitle: '解锁高级 AI 功能与特权',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const MembershipScreen()),
-            ),
+            onTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const MembershipScreen())),
           ),
           _buildSettingsItem(
             icon: Icons.person_outline,
@@ -106,7 +115,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             title: '颜色和样式',
             subtitle: '主题, 文章样式',
             onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const AppearanceSettingsScreen()),
+              MaterialPageRoute(
+                builder: (_) => const AppearanceSettingsScreen(),
+              ),
             ),
           ),
           _buildSettingsItem(
@@ -114,7 +125,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             title: '交互',
             subtitle: '手势操作, 启动页面',
             onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const InteractionSettingsScreen()),
+              MaterialPageRoute(
+                builder: (_) => const InteractionSettingsScreen(),
+              ),
             ),
           ),
           _buildSettingsItem(
@@ -128,31 +141,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildSettingsItem(
             icon: Icons.auto_awesome_outlined,
             title: 'AI功能',
-            subtitle: 'AI 提供商, AI 指令',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const AISettingsScreen()),
+            subtitle: 'AI 提供商, 翻译与生成',
+            onTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const AISettingsScreen())),
+          ),
+          if (isAdmin)
+            _buildSettingsItem(
+              icon: Icons.highlight_outlined,
+              title: '高亮设置',
+              subtitle: '管理文章中的关键词高亮',
+              onTap: _showComingSoon,
             ),
-          ),
-          _buildSettingsItem(
-            icon: Icons.highlight_outlined,
-            title: '高亮设置',
-            subtitle: '管理文章中的关键词高亮',
-            onTap: _showComingSoon,
-          ),
-          _buildSettingsItem(
-            icon: Icons.record_voice_over_outlined,
-            title: 'TTS设置',
-            subtitle: '语音、语言设置',
-            onTap: _showComingSoon,
-          ),
-          _buildSettingsItem(
-            icon: Icons.sync_outlined,
-            title: '同步设置',
-            subtitle: '自动刷新, API 地址配置',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SyncSettingsScreen()),
+          if (isAdmin)
+            _buildSettingsItem(
+              icon: Icons.record_voice_over_outlined,
+              title: 'TTS设置',
+              subtitle: '语音、语言设置',
+              onTap: _showComingSoon,
             ),
-          ),
+          if (isAdmin)
+            _buildSettingsItem(
+              icon: Icons.sync_outlined,
+              title: '平台设置',
+              subtitle: '抓取节奏、内容展示与 RSSHub 默认配置',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const PlatformSettingsScreen(),
+                ),
+              ),
+            ),
           _buildSettingsItem(
             icon: Icons.import_export_outlined,
             title: '导入/导出',
@@ -161,16 +179,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               MaterialPageRoute(builder: (_) => const OpmlSettingsScreen()),
             ),
           ),
-          if (ref.watch(authProvider).user?.role == 'admin')
+          if (isLoggedIn)
+            _buildSettingsItem(
+              icon: Icons.edit_note_outlined,
+              title: '内容管理',
+              subtitle: '管理自建频道和自有订阅源',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const AdminManagementScreen(),
+                ),
+              ),
+            ),
+          if (isAdmin)
             _buildSettingsItem(
               icon: Icons.admin_panel_settings_outlined,
               title: '平台管理中心',
               subtitle: '全局频道、分组和信息源管理',
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const AdminManagementScreen(isPlatformAdmin: true)),
+                MaterialPageRoute(
+                  builder: (_) =>
+                      const AdminManagementScreen(isPlatformAdmin: true),
+                ),
               ),
             ),
-          if (ref.watch(authProvider).user?.role == 'admin')
+          if (isAdmin)
             _buildSettingsItem(
               icon: Icons.people_outline,
               title: '用户管理',
@@ -183,9 +215,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             icon: Icons.info_outline,
             title: '关于',
             subtitle: '应用信息、版本',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const AboutScreen()),
-            ),
+            onTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const AboutScreen())),
           ),
         ],
       ),
@@ -215,7 +247,8 @@ class AccountSettingsScreen extends ConsumerStatefulWidget {
   const AccountSettingsScreen({super.key});
 
   @override
-  ConsumerState<AccountSettingsScreen> createState() => _AccountSettingsScreenState();
+  ConsumerState<AccountSettingsScreen> createState() =>
+      _AccountSettingsScreenState();
 }
 
 class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
@@ -236,6 +269,23 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
   bool _obscureCurrentPassword = true;
   bool _obscureNewPassword = true;
   bool _obscureConfirmPassword = true;
+  Future<Map<String, dynamic>>? _membershipFuture;
+
+  Future<Map<String, dynamic>> _loadMembershipStatus() {
+    return ref.read(feedRepositoryProvider).getMembershipStatus();
+  }
+
+  String _membershipLabel(Map<String, dynamic>? membership) {
+    final tier = membership?['tier']?.toString().toLowerCase() ?? 'free';
+    switch (tier) {
+      case 'pro':
+        return 'Pro 会员';
+      case 'plus':
+        return 'Plus 会员';
+      default:
+        return 'Free 会员';
+    }
+  }
 
   @override
   void dispose() {
@@ -286,16 +336,17 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
 
     try {
       if (_registerMode) {
-        await ref.read(authProvider.notifier).register(
-              username,
-              password,
-              email.isEmpty ? null : email,
-            );
+        await ref
+            .read(authProvider.notifier)
+            .register(username, password, email.isEmpty ? null : email);
         _showSnackBar('注册并登录成功');
       } else {
         await ref.read(authProvider.notifier).login(username, password);
         _showSnackBar('登录成功');
       }
+      setState(() {
+        _membershipFuture = _loadMembershipStatus();
+      });
       ref.invalidate(entriesProvider);
       ref.invalidate(feedsProvider);
       ref.invalidate(starredEntriesProvider);
@@ -331,10 +382,13 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
     if (confirmed == true) {
       // 先清空Provider状态
       await ref.read(authProvider.notifier).logout();
+      setState(() {
+        _membershipFuture = null;
+      });
       ref.invalidate(entriesProvider);
       ref.invalidate(feedsProvider);
       ref.invalidate(starredEntriesProvider);
-      
+
       // 关闭设置页面，返回到主页
       if (mounted) {
         Navigator.of(context).popUntil((route) => route.isFirst);
@@ -386,7 +440,10 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
                 await ref.read(authProvider.notifier).updateEmail(newEmail);
                 _showSnackBar('邮箱修改成功');
               } catch (e) {
-                _showSnackBar(e.toString().replaceAll('Exception: ', ''), isError: true);
+                _showSnackBar(
+                  e.toString().replaceAll('Exception: ', ''),
+                  isError: true,
+                );
               }
             },
             child: const Text('保存'),
@@ -417,8 +474,14 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
                   border: const OutlineInputBorder(),
                   prefixIcon: const Icon(Icons.lock_outline),
                   suffixIcon: IconButton(
-                    icon: Icon(_obscureCurrentPassword ? Icons.visibility_off : Icons.visibility),
-                    onPressed: () => setDialogState(() => _obscureCurrentPassword = !_obscureCurrentPassword),
+                    icon: Icon(
+                      _obscureCurrentPassword
+                          ? Icons.visibility_off
+                          : Icons.visibility,
+                    ),
+                    onPressed: () => setDialogState(
+                      () => _obscureCurrentPassword = !_obscureCurrentPassword,
+                    ),
                   ),
                 ),
                 obscureText: _obscureCurrentPassword,
@@ -432,8 +495,14 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
                   border: const OutlineInputBorder(),
                   prefixIcon: const Icon(Icons.lock_person_outlined),
                   suffixIcon: IconButton(
-                    icon: Icon(_obscureNewPassword ? Icons.visibility_off : Icons.visibility),
-                    onPressed: () => setDialogState(() => _obscureNewPassword = !_obscureNewPassword),
+                    icon: Icon(
+                      _obscureNewPassword
+                          ? Icons.visibility_off
+                          : Icons.visibility,
+                    ),
+                    onPressed: () => setDialogState(
+                      () => _obscureNewPassword = !_obscureNewPassword,
+                    ),
                   ),
                 ),
                 obscureText: _obscureNewPassword,
@@ -447,8 +516,14 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
                   border: const OutlineInputBorder(),
                   prefixIcon: const Icon(Icons.lock_reset_outlined),
                   suffixIcon: IconButton(
-                    icon: Icon(_obscureConfirmPassword ? Icons.visibility_off : Icons.visibility),
-                    onPressed: () => setDialogState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+                    icon: Icon(
+                      _obscureConfirmPassword
+                          ? Icons.visibility_off
+                          : Icons.visibility,
+                    ),
+                    onPressed: () => setDialogState(
+                      () => _obscureConfirmPassword = !_obscureConfirmPassword,
+                    ),
                   ),
                 ),
                 obscureText: _obscureConfirmPassword,
@@ -477,7 +552,9 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
     final newPassword = _newPasswordController.text;
     final confirmPassword = _confirmPasswordController.text;
 
-    if (currentPassword.isEmpty || newPassword.isEmpty || confirmPassword.isEmpty) {
+    if (currentPassword.isEmpty ||
+        newPassword.isEmpty ||
+        confirmPassword.isEmpty) {
       _showSnackBar('请填写所有密码字段', isError: true);
       return;
     }
@@ -492,7 +569,9 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
 
     Navigator.pop(context);
     try {
-      await ref.read(authProvider.notifier).updatePassword(currentPassword, newPassword);
+      await ref
+          .read(authProvider.notifier)
+          .updatePassword(currentPassword, newPassword);
       _showSnackBar('密码修改成功');
     } catch (e) {
       _showSnackBar(e.toString().replaceAll('Exception: ', ''), isError: true);
@@ -528,21 +607,90 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
     final colorScheme = theme.colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('账户管理'),
-        elevation: 0,
-      ),
+      appBar: AppBar(title: const Text('账户管理'), elevation: 0),
       body: auth.isLoggedIn
-          ? _buildLoggedInView(auth, theme, colorScheme)
+          ? FutureBuilder<Map<String, dynamic>>(
+              future: _membershipFuture ??= _loadMembershipStatus(),
+              builder: (context, snapshot) {
+                return _buildLoggedInView(
+                  auth,
+                  theme,
+                  colorScheme,
+                  membership: snapshot.data,
+                );
+              },
+            )
           : _buildLoginView(auth, theme, colorScheme),
     );
   }
 
   // 已登录状态视图
-  Widget _buildLoggedInView(AuthState auth, ThemeData theme, ColorScheme colorScheme) {
+  Widget _buildLoggedInView(
+    AuthState auth,
+    ThemeData theme,
+    ColorScheme colorScheme, {
+    Map<String, dynamic>? membership,
+  }) {
     final user = auth.user;
     if (user == null) {
-      return const Center(child: CircularProgressIndicator());
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.cloud_off_outlined,
+                    size: 42,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    '当前处于离线状态',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '无法刷新账户资料，但你仍然可以退出登录，或在网络恢复后重新打开此页面。',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          FilledButton.tonalIcon(
+            onPressed: _logout,
+            icon: const Icon(Icons.logout),
+            label: const Text('退出登录'),
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              backgroundColor: Colors.red.withValues(alpha: 0.1),
+              foregroundColor: Colors.red,
+            ),
+          ),
+          if (auth.loading)
+            const Padding(
+              padding: EdgeInsets.only(top: 24),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+        ],
+      );
     }
 
     return ListView(
@@ -553,7 +701,9 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+            side: BorderSide(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
           ),
           child: Padding(
             padding: const EdgeInsets.all(20),
@@ -580,7 +730,10 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
                 ),
                 const SizedBox(height: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: user.role == 'admin'
                         ? Colors.orange.withValues(alpha: 0.1)
@@ -590,7 +743,9 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
                   child: Text(
                     user.role == 'admin' ? '管理员' : '普通用户',
                     style: TextStyle(
-                      color: user.role == 'admin' ? Colors.orange : colorScheme.onPrimaryContainer,
+                      color: user.role == 'admin'
+                          ? Colors.orange
+                          : colorScheme.onPrimaryContainer,
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                     ),
@@ -602,7 +757,20 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
                 // 详细信息
                 _buildInfoRow(Icons.email_outlined, '邮箱', user.email ?? '未设置'),
                 const SizedBox(height: 12),
-                _buildInfoRow(Icons.calendar_today_outlined, '注册时间', _formatDate(user.createdAt)),
+                _buildInfoRow(
+                  Icons.workspace_premium_outlined,
+                  '会员等级',
+                  _membershipLabel(membership),
+                  valueColor: membership?['tier'] == 'free'
+                      ? colorScheme.onSurface
+                      : Colors.orange,
+                ),
+                const SizedBox(height: 12),
+                _buildInfoRow(
+                  Icons.calendar_today_outlined,
+                  '注册时间',
+                  _formatDate(user.createdAt),
+                ),
                 const SizedBox(height: 12),
                 _buildInfoRow(
                   Icons.verified_user_outlined,
@@ -666,7 +834,12 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
   }
 
   // 构建信息行
-  Widget _buildInfoRow(IconData icon, String label, String value, {Color? valueColor}) {
+  Widget _buildInfoRow(
+    IconData icon,
+    String label,
+    String value, {
+    Color? valueColor,
+  }) {
     return Row(
       children: [
         Icon(icon, size: 20, color: Colors.grey),
@@ -702,7 +875,11 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
       margin: const EdgeInsets.only(bottom: 8),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5)),
+        side: BorderSide(
+          color: Theme.of(
+            context,
+          ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
       ),
       child: ListTile(
         leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
@@ -716,7 +893,11 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
   }
 
   // 未登录状态视图
-  Widget _buildLoginView(AuthState auth, ThemeData theme, ColorScheme colorScheme) {
+  Widget _buildLoginView(
+    AuthState auth,
+    ThemeData theme,
+    ColorScheme colorScheme,
+  ) {
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
@@ -765,7 +946,9 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
             hintText: '请输入用户名',
             prefixIcon: const Icon(Icons.person_outline),
             border: const OutlineInputBorder(),
-            helperText: _registerMode ? '仅允许字母、数字、下划线(_)和连字符(-)，至少 3 个字符' : null,
+            helperText: _registerMode
+                ? '仅允许字母、数字、下划线(_)和连字符(-)，至少 3 个字符'
+                : null,
           ),
           textInputAction: TextInputAction.next,
           onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
@@ -782,12 +965,17 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
             border: const OutlineInputBorder(),
             helperText: _registerMode ? '至少 6 个字符' : null,
             suffixIcon: IconButton(
-              icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+              icon: Icon(
+                _obscurePassword ? Icons.visibility_off : Icons.visibility,
+              ),
+              onPressed: () =>
+                  setState(() => _obscurePassword = !_obscurePassword),
             ),
           ),
           obscureText: _obscurePassword,
-          textInputAction: _registerMode ? TextInputAction.next : TextInputAction.done,
+          textInputAction: _registerMode
+              ? TextInputAction.next
+              : TextInputAction.done,
           onFieldSubmitted: (_) {
             if (_registerMode) {
               FocusScope.of(context).nextFocus();
@@ -823,7 +1011,10 @@ class _AccountSettingsScreenState extends ConsumerState<AccountSettingsScreen> {
               ? const SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
               : Icon(_registerMode ? Icons.person_add : Icons.login),
           label: Text(_registerMode ? '注册并登录' : '登录'),

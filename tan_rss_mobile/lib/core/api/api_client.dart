@@ -1,13 +1,15 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiClient {
   static final ApiClient _instance = ApiClient._internal();
-  static const String defaultBaseUrl = 'http://localhost:27496/api';
+  static const String defaultBaseUrl = 'http://art.xshxy.cn/api';
   static const String authTokenKey = 'auth_token';
   static const String authSessionKey = 'auth_session_active';
+  static const String desktopAuthTokenKey = 'desktop_auth_token';
   late Dio dio;
   final _storage = const FlutterSecureStorage();
 
@@ -29,7 +31,7 @@ class ApiClient {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          final token = await _storage.read(key: 'auth_token');
+          final token = await getAuthToken();
           if (token != null) {
             options.headers['Authorization'] = 'Bearer $token';
           }
@@ -48,23 +50,38 @@ class ApiClient {
 
   String get baseUrl => dio.options.baseUrl;
 
+  bool get _usePrefsForTokenStorage =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
+
   void setBaseUrl(String value) {
     dio.options.baseUrl = value.trim();
   }
 
   Future<void> saveAuthToken(String token) async {
-    await _storage.write(key: authTokenKey, value: token);
     final prefs = await SharedPreferences.getInstance();
+    if (_usePrefsForTokenStorage) {
+      await prefs.setString(desktopAuthTokenKey, token);
+    } else {
+      await _storage.write(key: authTokenKey, value: token);
+    }
     await prefs.setBool(authSessionKey, true);
   }
 
-  Future<String?> getAuthToken() {
+  Future<String?> getAuthToken() async {
+    if (_usePrefsForTokenStorage) {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(desktopAuthTokenKey);
+    }
     return _storage.read(key: authTokenKey);
   }
 
   Future<void> clearAuthToken() async {
-    await _storage.delete(key: authTokenKey);
     final prefs = await SharedPreferences.getInstance();
+    if (_usePrefsForTokenStorage) {
+      await prefs.remove(desktopAuthTokenKey);
+    } else {
+      await _storage.delete(key: authTokenKey);
+    }
     await prefs.remove(authSessionKey);
   }
 

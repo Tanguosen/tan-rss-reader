@@ -48,6 +48,48 @@ class AboutScreen extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 48),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'TAN = Trend · Awareness · Network',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+                SizedBox(height: 6),
+                Text(
+                  '（趋势 · 认知 · 网络）',
+                  style: TextStyle(fontSize: 14, height: 1.5),
+                ),
+                SizedBox(height: 16),
+                Text(
+                  'Trend：前沿趋势、最新研究、技术动向',
+                  style: TextStyle(fontSize: 15, height: 1.7),
+                ),
+                SizedBox(height: 10),
+                Text(
+                  'Awareness：认知觉察、理解、判断',
+                  style: TextStyle(fontSize: 15, height: 1.7),
+                ),
+                SizedBox(height: 10),
+                Text(
+                  'Network：信息网络、知识网络、专家网络',
+                  style: TextStyle(fontSize: 15, height: 1.7),
+                ),
+                SizedBox(height: 14),
+                Text(
+                  '整体含义：面向未来的趋势感知与认知网络',
+                  style: TextStyle(fontSize: 15, height: 1.7),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 28),
           ListTile(
             leading: const Icon(Icons.code),
             title: const Text('核心特性'),

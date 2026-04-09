@@ -76,11 +76,19 @@ class ChannelSourceRequest(BaseModel):
     order_index: Optional[int] = None
     weight: Optional[int] = None
 
+class UpdateChannelSourceRequest(BaseModel):
+    title: Optional[str] = None
+    update_interval: Optional[int] = None
+    order_index: Optional[int] = None
+    weight: Optional[int] = None
+
 class ChannelSourceItem(BaseModel):
     feed_id: str
     url: str
     title: Optional[str] = None
     favicon_url: Optional[str] = None
+    update_interval: Optional[int] = None
+    feed_owner_id: Optional[str] = None
     order_index: Optional[int] = None
     weight: Optional[int] = None
     created_at: Optional[str] = None
@@ -246,6 +254,12 @@ async def list_channels(
 async def create_channel(payload: CreateChannelRequest, session: AsyncSession = Depends(get_session), user=Depends(get_current_user)) -> Channel:
     cid = str(uuid4())
     now = datetime.utcnow()
+    owner_id = user.id
+    if user.role == "admin":
+        if payload.owner_id == "":
+            owner_id = None
+        elif payload.owner_id:
+            owner_id = payload.owner_id
     row = SAChannel(
         id=cid,
         name=payload.name,
@@ -253,7 +267,7 @@ async def create_channel(payload: CreateChannelRequest, session: AsyncSession = 
         icon_url=payload.icon_url,
         cover_url=payload.cover_url,
         is_public=bool(payload.is_public) if payload.is_public is not None else True,
-        owner_id=payload.owner_id if user.role == "admin" and payload.owner_id else user.id,
+        owner_id=owner_id,
         category_id=payload.category_id,
         created_at=now,
         updated_at=now,
@@ -403,8 +417,10 @@ async def list_channel_sources(
             ChannelSourceItem(
                 feed_id=f.id,
                 url=f.url,
-                title=f.title,
+                title=cs.title_override or f.title,
                 favicon_url=f.favicon,
+                update_interval=cs.update_interval_override if cs.update_interval_override is not None else f.update_interval,
+                feed_owner_id=getattr(f, "owner_id", None),
                 order_index=cs.order_index,
                 weight=cs.weight,
                 created_at=cs.created_at.isoformat() + "Z" if cs.created_at else None,
@@ -438,6 +454,57 @@ async def add_channel_source(id: str, payload: ChannelSourceRequest, session: As
     session.add(row)
     await session.commit()
     return {"message": "Added"}
+
+@router.patch("/admin/channels/{id}/sources/{feed_id}", response_model=ChannelSourceItem)
+@router.put("/admin/channels/{id}/sources/{feed_id}", response_model=ChannelSourceItem)
+async def update_channel_source(
+    id: str,
+    feed_id: str,
+    payload: UpdateChannelSourceRequest,
+    session: AsyncSession = Depends(get_session),
+    user=Depends(get_current_user),
+) -> ChannelSourceItem:
+    q_chan = await session.execute(select(SAChannel).where(SAChannel.id == id))
+    c = q_chan.scalar_one_or_none()
+    if not c:
+        raise HTTPException(status_code=404)
+    if user.role != "admin" and c.owner_id != user.id:
+        raise HTTPException(status_code=403)
+
+    row = (
+        await session.execute(
+            select(SAChannelSource, SAFeed)
+            .where(SAChannelSource.channel_id == id, SAChannelSource.feed_id == feed_id)
+            .where(SAFeed.id == feed_id)
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404)
+
+    cs, f = row
+    if payload.title is not None:
+        cs.title_override = payload.title
+    if payload.update_interval is not None:
+        cs.update_interval_override = payload.update_interval
+    if payload.order_index is not None:
+        cs.order_index = payload.order_index
+    if payload.weight is not None:
+        cs.weight = payload.weight
+
+    await session.commit()
+    await session.refresh(cs)
+
+    return ChannelSourceItem(
+        feed_id=f.id,
+        url=f.url,
+        title=cs.title_override or f.title,
+        favicon_url=f.favicon,
+        update_interval=cs.update_interval_override if cs.update_interval_override is not None else f.update_interval,
+        feed_owner_id=getattr(f, "owner_id", None),
+        order_index=cs.order_index,
+        weight=cs.weight,
+        created_at=cs.created_at.isoformat() + "Z" if cs.created_at else None,
+    )
 
 @router.delete("/admin/channels/{id}/sources/{feed_id}")
 async def remove_channel_source(id: str, feed_id: str, session: AsyncSession = Depends(get_session), user=Depends(get_current_user)) -> dict:

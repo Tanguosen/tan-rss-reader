@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import 'package:timeago/timeago.dart' as timeago;
+import '../../auth/presentation/auth_providers.dart';
 
 class UserManagementScreen extends ConsumerStatefulWidget {
   const UserManagementScreen({super.key});
@@ -218,6 +219,8 @@ class _UserManagementScreenState extends ConsumerState<UserManagementScreen> {
       itemCount: _users.length,
       itemBuilder: (context, index) {
         final user = _users[index];
+        final currentUserId = ref.watch(authProvider).user?.id;
+        final isSelf = user['id'] == currentUserId;
         final isActive = user['is_active'] ?? true;
         final tier = user['tier'] ?? 'free';
         final role = user['role'] ?? 'user';
@@ -306,6 +309,17 @@ class _UserManagementScreenState extends ConsumerState<UserManagementScreen> {
                     ),
                   ],
                 ),
+                if (isSelf) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    '当前登录管理员，禁止在此页面修改自己的角色、状态或删除自己。',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Theme.of(context).colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 4),
                 Text(
                   createdAt != null
@@ -315,22 +329,27 @@ class _UserManagementScreenState extends ConsumerState<UserManagementScreen> {
                 ),
               ],
             ),
-            trailing: PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'edit') {
-                  _showEditDialog(user);
-                } else if (value == 'delete') {
-                  _deleteUser(user);
-                }
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(value: 'edit', child: Text('编辑')),
-                const PopupMenuItem(
-                  value: 'delete',
-                  child: Text('删除', style: TextStyle(color: Colors.red)),
-                ),
-              ],
-            ),
+            trailing: isSelf
+                ? const Tooltip(
+                    message: '当前登录管理员不可编辑自身权限',
+                    child: Icon(Icons.lock_outline),
+                  )
+                : PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'edit') {
+                        _showEditDialog(user);
+                      } else if (value == 'delete') {
+                        _deleteUser(user);
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(value: 'edit', child: Text('编辑')),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Text('删除', style: TextStyle(color: Colors.red)),
+                      ),
+                    ],
+                  ),
           ),
         );
       },

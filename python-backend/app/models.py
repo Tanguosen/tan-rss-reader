@@ -9,6 +9,7 @@ class Feed(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     url: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    owner_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     # category field deprecated - use Channel instead for organization
     favicon: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     update_interval: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -55,6 +56,15 @@ class EntryAI(Base):
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
     translation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class WebContentCache(Base):
+    __tablename__ = "web_content_cache"
+    url: Mapped[str] = mapped_column(String, primary_key=True)
+    title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 class RSSHubConfig(Base):
@@ -163,6 +173,8 @@ class ChannelSource(Base):
     feed_id: Mapped[str] = mapped_column(String, ForeignKey("feeds.id"), primary_key=True)
     order_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     weight: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    title_override: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    update_interval_override: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 class User(Base):

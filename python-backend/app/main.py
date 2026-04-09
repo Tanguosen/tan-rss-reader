@@ -5,7 +5,10 @@ from sqlalchemy import select
 from .db import engine, Base as SABase, SessionLocal
 from .models import AppSettingsRow as SAAppSettingsRow
 from .config import SETTINGS
-from .compat_migrations import migrate_global_entry_state_to_user_state
+from .compat_migrations import (
+    ensure_feed_and_channel_source_columns,
+    migrate_global_entry_state_to_user_state,
+)
 from .handlers.icons import router as icons_router
 from .handlers.tasks import router as tasks_router, TASK_SCHEDULER
 from .handlers.opml import router as opml_router
@@ -82,6 +85,7 @@ async def on_startup():
             pass
     session = SessionLocal()
     try:
+        await ensure_feed_and_channel_source_columns(session)
         q1 = await session.execute(select(SAAppSettingsRow).where(SAAppSettingsRow.id == "default"))
         srow = q1.scalar_one_or_none()
         if srow:

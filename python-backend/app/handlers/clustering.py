@@ -1,11 +1,65 @@
 from sklearn.cluster import DBSCAN
 import numpy as np
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 import logging
 from .vector_store import vector_store
 
 logger = logging.getLogger(__name__)
+
+EXPECTED_EMBEDDING_DIM = 1024
+
+
+def _sanitize_embedding(raw_embedding: Any) -> Optional[np.ndarray]:
+    try:
+        vector = np.asarray(raw_embedding, dtype=np.float64).reshape(-1)
+    except Exception:
+        return None
+
+    if vector.size != EXPECTED_EMBEDDING_DIM:
+        return None
+
+    if not np.all(np.isfinite(vector)):
+        return None
+
+    vector = np.clip(vector, -1e4, 1e4)
+    norm = np.linalg.norm(vector)
+    if not np.isfinite(norm) or norm <= 1e-12:
+        return None
+
+    vector = vector / norm
+    if not np.all(np.isfinite(vector)):
+        return None
+    return vector
+
+
+def _prepare_cluster_inputs(
+    entries: List[Dict[str, Any]],
+) -> Tuple[np.ndarray, List[str], List[str], List[Dict[str, Any]]]:
+    cleaned_vectors: List[np.ndarray] = []
+    ids: List[str] = []
+    titles: List[str] = []
+    cleaned_entries: List[Dict[str, Any]] = []
+    invalid_count = 0
+
+    for entry in entries:
+        vector = _sanitize_embedding(entry.get("embedding"))
+        if vector is None:
+            invalid_count += 1
+            continue
+        cleaned_vectors.append(vector)
+        ids.append(entry.get("entry_id") or "")
+        titles.append(entry.get("title") or "未命名主题")
+        cleaned_entries.append(entry)
+
+    if invalid_count:
+        logger.warning("Skipping %s invalid embedding vectors before clustering", invalid_count)
+
+    if not cleaned_vectors:
+        return np.empty((0, EXPECTED_EMBEDDING_DIM), dtype=np.float64), [], [], []
+
+    X = np.vstack(cleaned_vectors).astype(np.float64, copy=False)
+    return X, ids, titles, cleaned_entries
 
 class ClusteringService:
     def __init__(self, vector_store):
@@ -35,50 +89,21 @@ class ClusteringService:
             return []
 
         # 2. Prepare data
-        ids = [e["entry_id"] for e in entries]
-        embeddings = [e["embedding"] for e in entries]
-        titles = [e["title"] for e in entries]
-        
-        if not embeddings:
-            return []
-
-        X = np.array(embeddings, dtype=np.float32)
-        
-        # 清洗异常值：将 NaN/Inf 替换为 0
-        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
-        
-        # 限制数值范围，防止溢出
-        X = np.clip(X, -1e6, 1e6)
-        
-        # 归一化向量（cosine 距离要求单位向量，防止零向量导致除零溢出）
-        norms = np.linalg.norm(X, axis=1, keepdims=True)
-        # 零向量用 1 替代，避免除零
-        norms[norms == 0] = 1.0
-        X = X / norms
-        
-        # 再次清洗归一化后的异常值
-        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
-        
-        # 过滤掉全零向量（embedding 失败的条目）
-        valid_mask = np.any(X != 0, axis=1)
-        if not np.all(valid_mask):
-            invalid_count = np.sum(~valid_mask)
-            logger.warning(f"Skipping {invalid_count} zero/invalid embedding vectors")
-            X = X[valid_mask]
-            ids = [ids[i] for i in range(len(ids)) if valid_mask[i]]
-            titles = [titles[i] for i in range(len(titles)) if valid_mask[i]]
-            entries = [entries[i] for i in range(len(entries)) if valid_mask[i]]
-        
+        X, ids, titles, entries = _prepare_cluster_inputs(entries)
         if len(X) == 0:
             return []
 
         # 3. Cluster
-        # eps: The maximum distance between two samples for one to be considered as in the neighborhood of the other.
-        # metric='cosine': cosine distance = 1 - cosine similarity.
-        # If similarity is high (close to 1), distance is low (close to 0).
-        # So eps=0.3 means similarity > 0.7.
+        # Use euclidean distance on normalized vectors to avoid sklearn cosine
+        # distance numerical instability. For unit vectors:
+        # ||u - v|| = sqrt(2 * (1 - cosine_similarity)).
+        effective_eps = float(np.sqrt(max(0.0, 2.0 * eps)))
         try:
-            db = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
+            db = DBSCAN(
+                eps=effective_eps,
+                min_samples=min_samples,
+                metric="euclidean",
+            )
             labels = db.fit_predict(X)
         except Exception as e:
             logger.error(f"Clustering failed: {e}")
@@ -128,7 +153,7 @@ class ClusteringService:
                 continue
                 
             cluster_vectors = X[indices]
-            centroid = np.mean(cluster_vectors, axis=0)
+            centroid = np.mean(cluster_vectors, axis=0, dtype=np.float64)
             
             # Find item closest to centroid (cosine similarity)
             # Cosine similarity = dot(a, b) / (|a| * |b|)
@@ -137,17 +162,15 @@ class ClusteringService:
             
             # Normalize centroid
             centroid_norm = np.linalg.norm(centroid)
-            if centroid_norm > 0:
-                centroid = centroid / centroid_norm
+            if not np.isfinite(centroid_norm) or centroid_norm <= 1e-12:
+                cluster["topic"] = titles[indices[0]]
+                del cluster["vector_indices"]
+                continue
+            centroid = centroid / centroid_norm
                 
             # Normalize cluster vectors (if not already)
             # Assuming vectors from model are normalized, but let's be safe
-            vec_norms = np.linalg.norm(cluster_vectors, axis=1)
-            # Avoid division by zero
-            vec_norms[vec_norms == 0] = 1
-            normalized_vecs = cluster_vectors / vec_norms[:, np.newaxis]
-            
-            similarities = np.dot(normalized_vecs, centroid)
+            similarities = np.clip(cluster_vectors @ centroid, -1.0, 1.0)
             best_idx_in_cluster = np.argmax(similarities)
             best_global_idx = indices[best_idx_in_cluster]
             

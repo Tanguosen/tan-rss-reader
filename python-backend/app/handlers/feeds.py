@@ -23,10 +23,12 @@ class Feed(BaseModel):
     url: str
     title: Optional[str] = None
     favicon_url: Optional[str] = None
+    update_interval: Optional[int] = None
     unread_count: int
     last_checked_at: Optional[str] = None
     last_error: Optional[str] = None
     channel_id: Optional[str] = None
+    owner_id: Optional[str] = None
 
 class CreateFeedRequest(BaseModel):
     url: str
@@ -36,6 +38,26 @@ class CreateFeedRequest(BaseModel):
 class UpdateFeedRequest(BaseModel):
     title: Optional[str] = None
     update_interval: Optional[int] = None
+
+
+def _feed_out(
+    feed: SAFeed,
+    *,
+    unread_count: int = 0,
+    channel_id: Optional[str] = None,
+) -> Feed:
+    return Feed(
+        id=feed.id,
+        url=feed.url,
+        title=feed.title,
+        favicon_url=feed.favicon,
+        update_interval=feed.update_interval,
+        unread_count=int(unread_count),
+        last_checked_at=feed.last_updated.isoformat() + "Z" if feed.last_updated else None,
+        last_error=feed.last_status,
+        channel_id=channel_id,
+        owner_id=getattr(feed, "owner_id", None),
+    )
 
 @router.get("/feeds", response_model=List[Feed])
 async def list_feeds(
@@ -68,15 +90,10 @@ async def list_feeds(
         feeds = []
         for f, sub_id, channel_id in rows:
             feeds.append(
-                Feed(
-                    id=f.id,
-                    url=f.url,
-                    title=f.title,
-                    favicon_url=f.favicon,
+                _feed_out(
+                    f,
                     unread_count=int(unread_map.get(f.id, 0)),
-                    last_checked_at=f.last_updated.isoformat() if f.last_updated else None,
-                    last_error=f.last_status,
-                    channel_id=channel_id
+                    channel_id=channel_id,
                 )
             )
         return feeds
@@ -92,17 +109,7 @@ async def list_feeds(
     
     feeds = []
     for f in rows:
-        feeds.append(
-            Feed(
-                id=f.id,
-                url=f.url,
-                title=f.title,
-                favicon_url=f.favicon,
-                unread_count=int(unread_map.get(f.id, 0)),
-                last_checked_at=f.last_updated.isoformat() if f.last_updated else None,
-                last_error=f.last_status,
-            )
-        )
+        feeds.append(_feed_out(f, unread_count=int(unread_map.get(f.id, 0))))
     return feeds
 
 @router.get("/admin/feeds", response_model=List[Feed])
@@ -121,18 +128,7 @@ async def list_admin_feeds(
     rows = (await session.execute(q)).scalars().all()
     feeds: List[Feed] = []
     for f in rows:
-        feeds.append(
-            Feed(
-                id=f.id,
-                url=f.url,
-                title=f.title,
-                favicon_url=f.favicon,
-                unread_count=0,
-                last_checked_at=f.last_updated.isoformat() if f.last_updated else None,
-                last_error=f.last_status,
-                update_interval=f.update_interval
-            )
-        )
+        feeds.append(_feed_out(f))
     return feeds
 
 @router.post("/admin/feeds", response_model=Feed)
@@ -144,15 +140,7 @@ async def create_admin_feed(
     existing = (await session.execute(select(SAFeed).where(SAFeed.url == payload.url))).scalar_one_or_none()
     if existing:
         # Just return existing if found
-        return Feed(
-            id=existing.id,
-            url=existing.url,
-            title=existing.title,
-            favicon_url=existing.favicon,
-            unread_count=0,
-            last_checked_at=existing.last_updated.isoformat() + "Z" if existing.last_updated else None,
-            last_error=existing.last_status,
-        )
+        return _feed_out(existing)
 
     fid = str(uuid4())
     title = payload.title if payload.title else payload.url
@@ -170,6 +158,7 @@ async def create_admin_feed(
         id=fid,
         title=title,
         url=payload.url,
+        owner_id=None,
         favicon=guessed_favicon,
         update_interval=payload.update_interval,
         last_updated=None,
@@ -205,16 +194,7 @@ async def create_admin_feed(
     except Exception:
         pass
 
-    return Feed(
-        id=fid,
-        url=payload.url,
-        title=title,
-        favicon_url=guessed_favicon,
-        unread_count=0,
-        last_checked_at=None,
-        last_error=None,
-        channel_id=channel_id,
-    )
+    return _feed_out(row, channel_id=channel_id)
 
 @router.put("/admin/feeds/{id}", response_model=Feed)
 async def update_admin_feed(
@@ -233,15 +213,7 @@ async def update_admin_feed(
         f.update_interval = payload.update_interval
     f.updated_at = datetime.utcnow()
     await session.commit()
-    return Feed(
-        id=f.id,
-        url=f.url,
-        title=f.title,
-        favicon_url=f.favicon,
-        unread_count=0,
-        last_checked_at=f.last_updated.isoformat() + "Z" if f.last_updated else None,
-        last_error=f.last_status,
-    )
+    return _feed_out(f)
 
 @router.delete("/admin/feeds/{id}")
 async def delete_admin_feed(
@@ -280,17 +252,7 @@ async def list_feeds(
     unread_map = await count_unread_for_feeds(session, [f.id for f in rows], current.id if current else None)
     feeds: List[Feed] = []
     for f in rows:
-        feeds.append(
-            Feed(
-                id=f.id,
-                url=f.url,
-                title=f.title,
-                favicon_url=f.favicon,
-                unread_count=int(unread_map.get(f.id, 0)),
-                last_checked_at=f.last_updated.isoformat() + "Z" if f.last_updated else None,
-                last_error=f.last_status,
-            )
-        )
+        feeds.append(_feed_out(f, unread_count=int(unread_map.get(f.id, 0))))
     return feeds
 
 @router.post("/feeds", response_model=Feed)
@@ -335,16 +297,7 @@ async def create_feed(payload: CreateFeedRequest, current: Optional[SAUser] = De
                 sub = SASub(id=sid, user_id=current.id, channel_id=channel_id, notify=False, created_at=now, updated_at=now)
                 session.add(sub)
                 await session.commit()
-        return Feed(
-            id=fid,
-            url=existing.url,
-            title=existing.title,
-            favicon_url=existing.favicon,
-            unread_count=0,
-            last_checked_at=existing.last_updated.isoformat() + "Z" if existing.last_updated else None,
-            last_error=existing.last_status,
-            channel_id=channel_id,
-        )
+        return _feed_out(existing, channel_id=channel_id)
     fid = str(uuid4())
     title = payload.title if payload.title else payload.url
     now = datetime.utcnow()
@@ -352,6 +305,7 @@ async def create_feed(payload: CreateFeedRequest, current: Optional[SAUser] = De
         id=fid,
         title=title,
         url=payload.url,
+        owner_id=(current.id if current else None),
         favicon=None,
         update_interval=payload.update_interval,
         last_updated=None,
@@ -400,16 +354,7 @@ async def create_feed(payload: CreateFeedRequest, current: Optional[SAUser] = De
             sub = SASub(id=sid, user_id=current.id, channel_id=channel_id, notify=False, created_at=now, updated_at=now)
             session.add(sub)
             await session.commit()
-    return Feed(
-        id=fid,
-        url=payload.url,
-        title=title,
-        favicon_url=None,
-        unread_count=0,
-        last_checked_at=None,
-        last_error=None,
-        channel_id=channel_id,
-    )
+    return _feed_out(row, channel_id=channel_id)
 
 @router.get("/feeds/{id}", response_model=Feed)
 async def get_feed(id: str, session: AsyncSession = Depends(get_session), current: Optional[SAUser] = Depends(get_optional_user)) -> Feed:
@@ -418,15 +363,7 @@ async def get_feed(id: str, session: AsyncSession = Depends(get_session), curren
     if not f:
         raise HTTPException(status_code=404)
     unread = (await count_unread_for_feeds(session, [id], current.id if current else None)).get(id, 0)
-    return Feed(
-        id=f.id,
-        url=f.url,
-        title=f.title,
-        favicon_url=f.favicon,
-        unread_count=int(unread),
-        last_checked_at=f.last_updated.isoformat() + "Z" if f.last_updated else None,
-        last_error=f.last_status,
-    )
+    return _feed_out(f, unread_count=int(unread))
 
 @router.put("/feeds/{id}", response_model=Feed)
 @router.patch("/feeds/{id}", response_model=Feed)
@@ -435,6 +372,10 @@ async def update_feed(id: str, payload: UpdateFeedRequest, session: AsyncSession
     f = q.scalar_one_or_none()
     if not f:
         raise HTTPException(status_code=404)
+    if current is None:
+        raise HTTPException(status_code=401)
+    if getattr(f, "owner_id", None) != current.id:
+        raise HTTPException(status_code=403, detail="无权编辑该订阅源")
     if payload.title is not None:
         f.title = payload.title
     if payload.update_interval is not None:
@@ -442,15 +383,7 @@ async def update_feed(id: str, payload: UpdateFeedRequest, session: AsyncSession
     f.updated_at = datetime.utcnow()
     await session.commit()
     unread = (await count_unread_for_feeds(session, [id], current.id if current else None)).get(id, 0)
-    return Feed(
-        id=f.id,
-        url=f.url,
-        title=f.title,
-        favicon_url=f.favicon,
-        unread_count=int(unread),
-        last_checked_at=f.last_updated.isoformat() + "Z" if f.last_updated else None,
-        last_error=f.last_status,
-    )
+    return _feed_out(f, unread_count=int(unread))
 
 @router.delete("/feeds/{id}")
 async def delete_feed(

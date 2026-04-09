@@ -107,6 +107,8 @@ class Feed {
   final String? favicon;
   final int? unreadCount;
   final String? channelId;
+  final int? updateInterval;
+  final String? ownerId;
 
   Feed({
     required this.id,
@@ -115,6 +117,8 @@ class Feed {
     this.favicon,
     this.unreadCount,
     this.channelId,
+    this.updateInterval,
+    this.ownerId,
   });
 
   factory Feed.fromJson(Map<String, dynamic> json) {
@@ -125,6 +129,8 @@ class Feed {
       favicon: json['favicon_url'] ?? json['favicon'],
       unreadCount: json['unread_count'] ?? 0,
       channelId: json['channel_id'],
+      updateInterval: json['update_interval'],
+      ownerId: json['owner_id'],
     );
   }
 }
@@ -143,16 +149,28 @@ class OpmlImportResult {
 
 class AppSettings {
   final int fetchIntervalMinutes;
+  final int itemsPerPage;
+  final String defaultDateRange;
+  final String timeField;
+  final bool showEntrySummary;
   final String rsshubUrl;
 
   const AppSettings({
     required this.fetchIntervalMinutes,
+    required this.itemsPerPage,
+    required this.defaultDateRange,
+    required this.timeField,
+    required this.showEntrySummary,
     required this.rsshubUrl,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
     return AppSettings(
       fetchIntervalMinutes: json['fetch_interval_minutes'] ?? 15,
+      itemsPerPage: json['items_per_page'] ?? 50,
+      defaultDateRange: json['default_date_range'] ?? '30d',
+      timeField: json['time_field'] ?? 'inserted_at',
+      showEntrySummary: json['show_entry_summary'] ?? true,
       rsshubUrl: json['rsshub_url'] ?? 'https://rsshub.app',
     );
   }
@@ -160,6 +178,10 @@ class AppSettings {
   Map<String, dynamic> toJson() {
     return {
       'fetch_interval_minutes': fetchIntervalMinutes,
+      'items_per_page': itemsPerPage,
+      'default_date_range': defaultDateRange,
+      'time_field': timeField,
+      'show_entry_summary': showEntrySummary,
       'rsshub_url': rsshubUrl,
     };
   }
@@ -420,6 +442,8 @@ class ChannelSourceItem {
   final String url;
   final String? title;
   final String? faviconUrl;
+  final int? updateInterval;
+  final String? feedOwnerId;
   final int? orderIndex;
   final int? weight;
   final String? createdAt;
@@ -429,6 +453,8 @@ class ChannelSourceItem {
     required this.url,
     this.title,
     this.faviconUrl,
+    this.updateInterval,
+    this.feedOwnerId,
     this.orderIndex,
     this.weight,
     this.createdAt,
@@ -440,6 +466,8 @@ class ChannelSourceItem {
       url: json['url'] ?? '',
       title: json['title'],
       faviconUrl: json['favicon_url'],
+      updateInterval: json['update_interval'],
+      feedOwnerId: json['feed_owner_id'],
       orderIndex: json['order_index'],
       weight: json['weight'],
       createdAt: json['created_at'],
@@ -506,6 +534,17 @@ class UserProfile {
       createdAt: json['created_at'],
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'username': username,
+      'email': email,
+      'role': role,
+      'is_active': isActive,
+      'created_at': createdAt,
+    };
+  }
 }
 
 class AiSummaryData {
@@ -553,6 +592,8 @@ class ResearchResult {
   final List<String> keyFindings;
   final List<String> openQuestions;
   final List<SearchResult> references;
+  final bool webEnhanced;
+  final int webEnhancedCount;
 
   const ResearchResult({
     required this.query,
@@ -561,6 +602,8 @@ class ResearchResult {
     required this.keyFindings,
     required this.openQuestions,
     required this.references,
+    required this.webEnhanced,
+    required this.webEnhancedCount,
   });
 
   factory ResearchResult.fromJson(Map<String, dynamic> json) {
@@ -576,11 +619,45 @@ class ResearchResult {
               ?.map((e) => '$e')
               .toList() ??
           const [],
+      webEnhanced: json['web_enhanced'] ?? false,
+      webEnhancedCount: json['web_enhanced_count'] ?? 0,
       references:
           (json['references'] as List<dynamic>?)
               ?.map((e) => SearchResult.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const [],
+    );
+  }
+}
+
+class OriginalArticle {
+  final String entryId;
+  final String title;
+  final String? url;
+  final String content;
+  final String source;
+  final String status;
+  final bool webAvailable;
+
+  const OriginalArticle({
+    required this.entryId,
+    required this.title,
+    required this.url,
+    required this.content,
+    required this.source,
+    required this.status,
+    required this.webAvailable,
+  });
+
+  factory OriginalArticle.fromJson(Map<String, dynamic> json) {
+    return OriginalArticle(
+      entryId: json['entry_id'] ?? '',
+      title: json['title'] ?? '',
+      url: json['url'],
+      content: json['content'] ?? '',
+      source: json['source'] ?? 'rss',
+      status: json['status'] ?? '',
+      webAvailable: json['web_available'] ?? false,
     );
   }
 }

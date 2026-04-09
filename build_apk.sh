@@ -3,6 +3,8 @@
 # =================================================================
 # TAN RSS Mobile APK 一键打包脚本
 # 说明：此脚本用于自动化构建 Flutter Android 应用程序的 APK 文件。
+# 默认行为：增量构建，不执行 flutter clean，避免重复下载原生依赖。
+# 可选参数：--clean 在构建前执行 flutter clean。
 # 产物：构建成功后，APK 文件将被复制到项目根目录的 release/ 文件夹下。
 # =================================================================
 
@@ -16,6 +18,11 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}=======================================${NC}"
 echo -e "${BLUE}      TAN RSS Mobile APK 打包工具      ${NC}"
 echo -e "${BLUE}=======================================${NC}"
+
+CLEAN_BUILD=false
+if [ "${1:-}" = "--clean" ]; then
+    CLEAN_BUILD=true
+fi
 
 # 获取项目根目录路径
 ROOT_DIR=$(pwd)
@@ -43,9 +50,18 @@ fi
 echo -e "${YELLOW}[1/4] 进入移动端项目目录...${NC}"
 cd "$APP_DIR" || exit 1
 
-echo -e "${YELLOW}[2/4] 清理旧的构建缓存...${NC}"
-$FLUTTER_CMD clean
+if [ "$CLEAN_BUILD" = true ]; then
+    echo -e "${YELLOW}[2/4] 执行完整清理并重新拉取依赖...${NC}"
+    $FLUTTER_CMD clean || exit 1
+else
+    echo -e "${YELLOW}[2/4] 使用增量构建（跳过 flutter clean）...${NC}"
+fi
+
 $FLUTTER_CMD pub get
+if [ $? -ne 0 ]; then
+    echo -e "${RED}依赖拉取失败，请检查网络或 Flutter 环境。${NC}"
+    exit 1
+fi
 
 echo -e "${YELLOW}[3/4] 开始构建 Release 版 APK...${NC}"
 # 执行 flutter build

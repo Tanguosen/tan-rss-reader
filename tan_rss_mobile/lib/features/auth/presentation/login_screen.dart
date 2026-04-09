@@ -48,7 +48,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   void _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    
+
     await _saveServerAddress();
 
     final username = _usernameController.text.trim();
@@ -58,7 +58,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       ref.read(authProvider.notifier).login(username, password);
     } else {
       final email = _emailController.text.trim();
-      ref.read(authProvider.notifier).register(username, password, email.isEmpty ? null : email);
+      ref
+          .read(authProvider.notifier)
+          .register(username, password, email.isEmpty ? null : email);
     }
   }
 
@@ -114,18 +116,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     'TAN RSS',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: colorScheme.primary,
-                          letterSpacing: 1.2,
-                        ),
+                      fontWeight: FontWeight.w800,
+                      color: colorScheme.primary,
+                      letterSpacing: 1.2,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     _isLoginMode ? '欢迎回来，请登录' : '创建新账号',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
+                      color: colorScheme.onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(height: 48),
 
@@ -136,14 +138,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     decoration: InputDecoration(
                       labelText: '用户名',
                       prefixIcon: const Icon(Icons.person_outline),
-                      helperText: _isLoginMode ? null : '仅允许字母、数字、下划线(_)和连字符(-)，至少 3 个字符',
+                      helperText: _isLoginMode
+                          ? null
+                          : '仅允许字母、数字、下划线(_)和连字符(-)，至少 3 个字符',
                       helperMaxLines: 2,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(16),
                         borderSide: BorderSide.none,
                       ),
                       filled: true,
-                      fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      fillColor: colorScheme.surfaceContainerHighest.withValues(
+                        alpha: 0.5,
+                      ),
                     ),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
@@ -151,14 +157,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       }
                       if (!_isLoginMode) {
                         if (value.trim().length < 3) return '用户名至少需要 3 个字符';
-                        if (!RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(value.trim())) {
+                        if (!RegExp(
+                          r'^[a-zA-Z0-9_-]+$',
+                        ).hasMatch(value.trim())) {
                           return '用户名只能包含字母、数字、_ 和 -';
                         }
                       }
                       return null;
                     },
                   ),
-                  
+
                   AnimatedSize(
                     duration: const Duration(milliseconds: 300),
                     curve: Curves.easeInOut,
@@ -178,11 +186,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 borderSide: BorderSide.none,
                               ),
                               filled: true,
-                              fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                              fillColor: colorScheme.surfaceContainerHighest
+                                  .withValues(alpha: 0.5),
                             ),
                             validator: (value) {
                               if (value != null && value.trim().isNotEmpty) {
-                                if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value.trim())) {
+                                if (!RegExp(
+                                  r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                                ).hasMatch(value.trim())) {
                                   return '邮箱格式不正确';
                                 }
                               }
@@ -207,7 +218,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       helperText: _isLoginMode ? null : '密码长度至少 6 个字符',
                       suffixIcon: IconButton(
                         icon: Icon(
-                          _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                          _obscurePassword
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
                         ),
                         onPressed: () {
                           setState(() {
@@ -220,7 +233,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         borderSide: BorderSide.none,
                       ),
                       filled: true,
-                      fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      fillColor: colorScheme.surfaceContainerHighest.withValues(
+                        alpha: 0.5,
+                      ),
                     ),
                     validator: (value) {
                       if (value == null || value.isEmpty) {
@@ -240,27 +255,76 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       children: [
                         if (_showServerConfig) ...[
                           const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _serverController,
-                            decoration: InputDecoration(
-                              labelText: '服务器地址',
-                              prefixIcon: const Icon(Icons.dns_outlined),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide.none,
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: colorScheme.surfaceContainerHighest
+                                  .withValues(alpha: 0.35),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: colorScheme.outlineVariant.withValues(
+                                  alpha: 0.35,
+                                ),
                               ),
-                              filled: true,
-                              fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                             ),
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return '请输入服务器地址';
-                              }
-                              if (!value.startsWith('http')) {
-                                return '地址必须以 http 或 https 开头';
-                              }
-                              return null;
-                            },
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.dns_outlined,
+                                      color: colorScheme.primary,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '服务器连接设置',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  '默认已预设公网后端地址。只有在切换开发环境或本地调试时才需要修改。',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: colorScheme.onSurfaceVariant,
+                                        height: 1.45,
+                                      ),
+                                ),
+                                const SizedBox(height: 14),
+                                TextFormField(
+                                  controller: _serverController,
+                                  decoration: InputDecoration(
+                                    labelText: '后端 API Base URL',
+                                    prefixIcon: const Icon(Icons.link_rounded),
+                                    hintText: 'http://art.xshxy.cn/api',
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    filled: true,
+                                    fillColor: Colors.white.withValues(
+                                      alpha: 0.75,
+                                    ),
+                                  ),
+                                  validator: (value) {
+                                    if (value == null || value.trim().isEmpty) {
+                                      return '请输入服务器地址';
+                                    }
+                                    if (!value.startsWith('http')) {
+                                      return '地址必须以 http 或 https 开头';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ],
@@ -277,11 +341,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         });
                       },
                       icon: Icon(
-                        _showServerConfig ? Icons.expand_less : Icons.settings_outlined,
+                        _showServerConfig
+                            ? Icons.expand_less
+                            : Icons.settings_outlined,
                         size: 16,
                       ),
                       label: Text(
-                        _showServerConfig ? '收起配置' : '服务器配置',
+                        _showServerConfig ? '收起连接设置' : '服务器连接设置',
                         style: const TextStyle(fontSize: 12),
                       ),
                     ),

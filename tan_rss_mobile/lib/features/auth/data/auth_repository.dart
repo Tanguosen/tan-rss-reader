@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/models/models.dart';
 
@@ -9,6 +10,7 @@ final authRepositoryProvider = Provider((ref) => AuthRepository(ApiClient()));
 
 class AuthRepository {
   final ApiClient _apiClient;
+  static const _cachedUserKey = 'cached_user_profile';
 
   AuthRepository(this._apiClient);
 
@@ -19,12 +21,10 @@ class AuthRepository {
     try {
       final response = await _apiClient.dio.post(
         '/auth/login',
-        data: {
-          'username': username,
-          'password': password,
-        },
+        data: {'username': username, 'password': password},
       );
-      final token = (response.data as Map<String, dynamic>)['access_token'] as String?;
+      final token =
+          (response.data as Map<String, dynamic>)['access_token'] as String?;
       if (token == null || token.isEmpty) {
         throw Exception('登录失败：服务器返回无效凭证');
       }
@@ -32,7 +32,7 @@ class AuthRepository {
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode;
       final detail = e.response?.data?['detail'];
-      
+
       if (detail != null) {
         throw Exception(detail.toString());
       }
@@ -54,16 +54,12 @@ class AuthRepository {
     try {
       await _apiClient.dio.post(
         '/auth/register',
-        data: {
-          'username': username,
-          'password': password,
-          'email': email,
-        },
+        data: {'username': username, 'password': password, 'email': email},
       );
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode;
       final detail = e.response?.data?['detail'];
-      
+
       if (detail != null) {
         throw Exception(detail.toString());
       }
@@ -80,7 +76,9 @@ class AuthRepository {
   Future<UserProfile> me() async {
     try {
       final response = await _apiClient.dio.get('/me');
-      return UserProfile.fromJson(response.data as Map<String, dynamic>);
+      final user = UserProfile.fromJson(response.data as Map<String, dynamic>);
+      await _saveCachedUser(user);
+      return user;
     } on DioException catch (e) {
       throw Exception('获取用户信息失败: ${e.message}');
     }
@@ -88,6 +86,7 @@ class AuthRepository {
 
   Future<void> logout() async {
     await _apiClient.clearAuthToken();
+    await _clearCachedUser();
   }
 
   Future<UserProfile> updateMe({
@@ -102,7 +101,9 @@ class AuthRepository {
       if (newPassword != null) data['new_password'] = newPassword;
 
       final response = await _apiClient.dio.patch('/me', data: data);
-      return UserProfile.fromJson(response.data as Map<String, dynamic>);
+      final user = UserProfile.fromJson(response.data as Map<String, dynamic>);
+      await _saveCachedUser(user);
+      return user;
     } on DioException catch (e) {
       final detail = e.response?.data?['detail'];
       if (detail != null) {
@@ -134,7 +135,9 @@ class AuthRepository {
       final parts = token.split('.');
       if (parts.length != 3) return true;
       final normalized = base64Url.normalize(parts[1]);
-      final payload = jsonDecode(utf8.decode(base64Url.decode(normalized))) as Map<String, dynamic>;
+      final payload =
+          jsonDecode(utf8.decode(base64Url.decode(normalized)))
+              as Map<String, dynamic>;
       final exp = payload['exp'];
       if (exp is! num) return true;
       final expiresAt = DateTime.fromMillisecondsSinceEpoch(exp.toInt() * 1000);
@@ -142,5 +145,26 @@ class AuthRepository {
     } catch (_) {
       return true;
     }
+  }
+
+  Future<UserProfile?> getCachedUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_cachedUserKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return UserProfile.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _saveCachedUser(UserProfile user) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_cachedUserKey, jsonEncode(user.toJson()));
+  }
+
+  Future<void> _clearCachedUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_cachedUserKey);
   }
 }

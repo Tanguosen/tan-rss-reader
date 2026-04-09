@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_html/flutter_html.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timeago/timeago.dart' as timeago;
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/models/models.dart';
@@ -306,7 +307,11 @@ class _EntryDetailContentState extends ConsumerState<_EntryDetailContent> {
     });
     try {
       final repository = ref.read(feedRepositoryProvider);
-      final stream = repository.generateDeepDiveStream(_entry.id);
+      final language = await _resolveDeepDiveLanguage();
+      final stream = repository.generateDeepDiveStream(
+        _entry.id,
+        language: language,
+      );
 
       await for (final chunk in stream) {
         if (!mounted) return;
@@ -326,6 +331,18 @@ class _EntryDetailContentState extends ConsumerState<_EntryDetailContent> {
         });
       }
     }
+  }
+
+  Future<String> _resolveDeepDiveLanguage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final configured = prefs.getString('ai_gen_language') ?? 'follow_app';
+    if (configured != 'follow_app' && configured.isNotEmpty) {
+      return configured;
+    }
+    if (!mounted) {
+      return 'zh';
+    }
+    return Localizations.localeOf(context).languageCode;
   }
 
   @override

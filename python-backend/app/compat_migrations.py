@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -12,6 +12,20 @@ from .models import (
     Subscription as SASubscription,
     UserEntryState as SAUserEntryState,
 )
+
+
+async def ensure_feed_and_channel_source_columns(session: AsyncSession) -> None:
+    statements = [
+        "ALTER TABLE feeds ADD COLUMN owner_id VARCHAR",
+        "ALTER TABLE channel_sources ADD COLUMN title_override VARCHAR",
+        "ALTER TABLE channel_sources ADD COLUMN update_interval_override INTEGER",
+    ]
+    for statement in statements:
+        try:
+            await session.execute(text(statement))
+        except Exception:
+            pass
+    await session.commit()
 
 
 async def migrate_global_entry_state_to_user_state(session: AsyncSession) -> dict:

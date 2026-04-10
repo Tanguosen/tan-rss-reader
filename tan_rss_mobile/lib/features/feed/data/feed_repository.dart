@@ -347,6 +347,15 @@ class FeedRepository {
     }
   }
 
+  Future<Map<String, dynamic>> refreshMySubscribedFeeds() async {
+    try {
+      final response = await _apiClient.dio.post('/me/subscriptions/refresh');
+      return Map<String, dynamic>.from(response.data as Map);
+    } on DioException catch (e) {
+      throw Exception('同步订阅源失败：${e.message}');
+    }
+  }
+
   Future<int> markChannelAllRead(String channelId) async {
     try {
       final response = await _apiClient.dio.post(

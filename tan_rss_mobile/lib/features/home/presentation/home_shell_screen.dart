@@ -24,7 +24,12 @@ class HomeShellScreen extends ConsumerStatefulWidget {
 
 class _HomeShellScreenState extends ConsumerState<HomeShellScreen> {
   Timer? _tokenCheckTimer;
+  Timer? _syncBannerTimer;
   bool _hasWarnedExpiry = false;
+  bool _isSyncingOnStartup = false;
+  bool _showSyncBanner = false;
+  String _syncBannerText = '正在同步最新内容...';
+  bool _startupSyncHandled = false;
 
   @override
   void initState() {
@@ -39,7 +44,55 @@ class _HomeShellScreenState extends ConsumerState<HomeShellScreen> {
   @override
   void dispose() {
     _tokenCheckTimer?.cancel();
+    _syncBannerTimer?.cancel();
     super.dispose();
+  }
+
+  void _showSyncStatus(String text, {Duration? autoHideAfter}) {
+    if (!mounted) return;
+    _syncBannerTimer?.cancel();
+    setState(() {
+      _syncBannerText = text;
+      _showSyncBanner = true;
+    });
+    if (autoHideAfter != null) {
+      _syncBannerTimer = Timer(autoHideAfter, () {
+        if (!mounted) return;
+        setState(() {
+          _showSyncBanner = false;
+        });
+      });
+    }
+  }
+
+  Future<void> _runStartupSync() async {
+    if (_isSyncingOnStartup || !_startupSyncHandled) return;
+    _isSyncingOnStartup = true;
+    _showSyncStatus('正在同步最新订阅内容...');
+    try {
+      final repository = ref.read(feedRepositoryProvider);
+      final result = await repository.refreshMySubscribedFeeds();
+      ref.invalidate(feedsProvider);
+      ref.invalidate(entriesProvider);
+      ref.invalidate(mySubscriptionsProvider);
+      ref.invalidate(recommendedTopicsProvider);
+      final refreshed = (result['refreshed'] as num?)?.toInt() ?? 0;
+      final newEntries = (result['new_entries'] as num?)?.toInt() ?? 0;
+      final failed = (result['failed'] as num?)?.toInt() ?? 0;
+      final text = refreshed == 0
+          ? '暂无可同步的订阅源'
+          : failed > 0
+          ? '已同步 $refreshed 个订阅源，更新 $newEntries 条，$failed 个失败'
+          : '已同步 $refreshed 个订阅源，发现 $newEntries 条更新';
+      _showSyncStatus(text, autoHideAfter: const Duration(seconds: 3));
+    } catch (_) {
+      _showSyncStatus(
+        '同步失败，已继续显示现有内容',
+        autoHideAfter: const Duration(seconds: 3),
+      );
+    } finally {
+      _isSyncingOnStartup = false;
+    }
   }
 
   Future<void> _checkTokenExpiry() async {
@@ -64,7 +117,31 @@ class _HomeShellScreenState extends ConsumerState<HomeShellScreen> {
     }
   }
 
+  @override
   Widget build(BuildContext context) {
+    final authState = ref.watch(authProvider);
+    if (authState.isLoggedIn && !_startupSyncHandled) {
+      _startupSyncHandled = true;
+      Future.microtask(_runStartupSync);
+    }
+    ref.listen<AuthState>(authProvider, (previous, next) {
+      final wasLoggedIn = previous?.isLoggedIn ?? false;
+      if (!next.isLoggedIn) {
+        _startupSyncHandled = false;
+        _syncBannerTimer?.cancel();
+        if (_showSyncBanner && mounted) {
+          setState(() {
+            _showSyncBanner = false;
+          });
+        }
+        return;
+      }
+      if (!wasLoggedIn && next.isLoggedIn) {
+        _startupSyncHandled = true;
+        Future.microtask(_runStartupSync);
+      }
+    });
+
     final currentTab = ref.watch(homeTabProvider);
     Widget body;
     if (currentTab == 0) {
@@ -77,7 +154,30 @@ class _HomeShellScreenState extends ConsumerState<HomeShellScreen> {
 
     return Scaffold(
       appBar: const CommonAppBar(title: 'TAN RSS'),
-      body: body,
+      body: Stack(
+        children: [
+          Positioned.fill(child: body),
+          if (_showSyncBanner)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 12,
+              child: SafeArea(
+                top: false,
+                child: IgnorePointer(
+                  child: AnimatedOpacity(
+                    opacity: _showSyncBanner ? 1 : 0,
+                    duration: const Duration(milliseconds: 220),
+                    child: _StartupSyncBanner(
+                      text: _syncBannerText,
+                      syncing: _isSyncingOnStartup,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: currentTab,
         onDestinationSelected: (index) {
@@ -100,6 +200,65 @@ class _HomeShellScreenState extends ConsumerState<HomeShellScreen> {
             label: '发现',
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _StartupSyncBanner extends StatelessWidget {
+  const _StartupSyncBanner({required this.text, required this.syncing});
+
+  final String text;
+  final bool syncing;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.6)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: syncing
+                  ? CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: scheme.primary,
+                    )
+                  : Icon(
+                      Icons.cloud_done_rounded,
+                      size: 18,
+                      color: scheme.primary,
+                    ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: scheme.onSurface,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

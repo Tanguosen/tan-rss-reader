@@ -10,6 +10,7 @@ from ..models import Subscription as SASub, Channel as SAChannel, ChannelSource 
 from .auth import get_current_user
 from ..utils.filters import apply_date_filter_to_entries_query
 from ..user_entry_state import read_value, starred_value, unread_filter, with_user_entry_state
+from ..services.rss_fetcher import fetch_feed as rss_fetch
 
 router = APIRouter()
 
@@ -174,3 +175,40 @@ async def my_subscription_entries(
             )
         )
     return items
+
+
+@router.post("/me/subscriptions/refresh")
+async def refresh_my_subscription_feeds(
+    current=Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    q1 = await session.execute(
+        select(SASub.channel_id).where(SASub.user_id == current.id)
+    )
+    channel_ids = q1.scalars().all()
+    if not channel_ids:
+        return {"refreshed": 0, "new_entries": 0, "failed": 0}
+
+    q2 = await session.execute(
+        select(SAChannelSource.feed_id).where(SAChannelSource.channel_id.in_(channel_ids))
+    )
+    feed_ids = sorted(set(q2.scalars().all()))
+    if not feed_ids:
+        return {"refreshed": 0, "new_entries": 0, "failed": 0}
+
+    refreshed = 0
+    new_entries = 0
+    failed = 0
+    for feed_id in feed_ids:
+        try:
+            result = await rss_fetch(session, feed_id)
+            refreshed += 1
+            new_entries += getattr(result, "new_count", 0)
+        except Exception:
+            failed += 1
+
+    return {
+        "refreshed": refreshed,
+        "new_entries": new_entries,
+        "failed": failed,
+    }

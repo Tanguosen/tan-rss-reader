@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  tan-rss-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    container_name: tan-rss-backend
+    ports:
+      - "27496:27496"
+    environment:
+      - DB_URL=${DB_URL:-}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - MILVUS_HOST=${MILVUS_HOST:-10.110.3.25}
+      - MILVUS_PORT=${MILVUS_PORT:-19530}
+      - MILVUS_COLLECTION=${MILVUS_COLLECTION:-rss_entries}
+      - AURORA_AI_API_KEY=${AURORA_AI_API_KEY:-}
+      - AURORA_AI_BASE_URL=${AURORA_AI_BASE_URL:-http://10.110.3.61:9997/v1}
+      - AURORA_AI_MODEL=${AURORA_AI_MODEL:-qwen3}
+      - AURORA_AI_EMBEDDING_BASE_URL=${AURORA_AI_EMBEDDING_BASE_URL:-http://10.110.3.61:9997/v1}
+      - AURORA_AI_EMBEDDING_MODEL=${AURORA_AI_EMBEDDING_MODEL:-Qwen3-Embedding-0.6B}
+      - HOST=0.0.0.0
+      - PORT=27496
+    volumes:
+      # 挂载数据库文件（如果需要持久化或更新数据库）
+      - ./data:/app/data
+      # 挂载日志目录（可选）
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - rss-network
+
+  # 可选：Redis 服务（Celery 任务队列需要）
+  redis:
+    image: redis:7-alpine
+    container_name: tan-rss-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - rss-network
+
+  # 可选：Celery Worker 服务（后台任务处理）
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    container_name: tan-rss-celery-worker
+    command: celery -A app.celery_app worker --loglevel=info
+    environment:
+      - DB_URL=${DB_URL:-}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - MILVUS_HOST=${MILVUS_HOST:-10.110.3.25}
+      - MILVUS_PORT=${MILVUS_PORT:-19530}
+      - MILVUS_COLLECTION=${MILVUS_COLLECTION:-rss_entries}
+      - AURORA_AI_API_KEY=${AURORA_AI_API_KEY:-}
+      - AURORA_AI_BASE_URL=${AURORA_AI_BASE_URL:-http://10.110.3.61:9997/v1}
+      - AURORA_AI_MODEL=${AURORA_AI_MODEL:-qwen3}
+      - AURORA_AI_EMBEDDING_BASE_URL=${AURORA_AI_EMBEDDING_BASE_URL:-http://10.110.3.61:9997/v1}
+      - AURORA_AI_EMBEDDING_MODEL=${AURORA_AI_EMBEDDING_MODEL:-Qwen3-Embedding-0.6B}
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - redis
+      - tan-rss-backend
+    restart: unless-stopped
+    networks:
+      - rss-network
+
+volumes:
+  redis-data:
+
+networks:
+  rss-network:
+    driver: bridge

@@ -39,4 +39,12 @@ tan_rss_mobile/windows/flutter/ephemeral/
 
 # 日志和数据库
 *.log
-*.db
+
+# Python 后端数据库（由 python-backend/.gitignore 管理）
+python-backend/data/*.db
+python-backend/deploy/server-deploy/
+python-backend/deploy/backups/
+python-backend/deploy/exports/
+python-backend/deploy/packages/
+python-backend/*.tar
+python-backend/*.tar.gz

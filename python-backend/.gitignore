@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+logs/
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ==========================================
+# Docker 部署相关文件（重要：不提交构建产物）
+# ==========================================
+
+# Docker 镜像文件（非常大，300MB+）
+*.tar
+*.tar.gz
+
+# 部署包输出目录（包含镜像和数据库）
+deploy/server-deploy/
+
+# 但保留部署脚本本身
+!deploy/*.sh
+!deploy/*.md
+!deploy/Dockerfile
+!deploy/docker-compose.yml
+
+# 备份文件
+deploy/backups/
+deploy/exports/
+deploy/packages/
+
+# ==========================================
+# 数据库（根据需求决定是否提交）
+# ==========================================
+
+# 生产数据库（通常不提交，由部署时提供）
+data/*.db
+
+# 如果需要提交空数据库结构，取消下面的注释
+# !data/empty.db
+
+# ==========================================
+# 环境配置
+# ==========================================
+.env
+!.env.example
+
+# ==========================================
+# Celery
+# ==========================================
+celerybeat-schedule
+celerybeat.pid
